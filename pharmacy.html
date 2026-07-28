@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy POS & Inventory — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .pos-grid{display:grid; grid-template-columns:1.4fr 1fr; gap:16px;}
+  @media(max-width:1000px){.pos-grid{grid-template-columns:1fr;}}
+  .med-tile{border:1px solid var(--line); border-radius:10px; padding:12px; cursor:pointer; background:var(--surface-2);}
+  .med-tile:hover{border-color:var(--lemon);}
+  .med-tile b{display:block; font-size:13.5px;}
+  .med-tile span{font-size:11.5px; color:var(--text-dim);}
+  .cart-row{display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05);}
+  .qty-ctrl{display:flex; align-items:center; gap:6px;}
+  .qty-ctrl button{width:24px;height:24px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--text-hi);}
+  #receiptArea{font-family:var(--font-mono); font-size:12.5px; background:#fff; color:#111; padding:18px; border-radius:8px;}
+</style>
+</head>
+<body>
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/notifications.js"></script>
+<script src="js/shell.js"></script>
+
+<script>
+const { user, contentEl } = renderShell({
+  activePage: "pharmacy",
+  title: "Pharmacy POS & Inventory",
+  subtitle: "Sell medicines, take payment, and manage hospital stock."
+});
+
+contentEl.innerHTML = `
+  <div class="tabs">
+    <div class="tab active" data-tab="posTab">Point of Sale</div>
+    <div class="tab" data-tab="invTab">Inventory & Medicines</div>
+  </div>
+
+  <div class="tab-panel active" id="posTab">
+    <div class="pos-grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Medicines</h3>
+          <input class="search-input" id="posSearch" placeholder="Search name or scan barcode, then press Enter...">
+        </div>
+        <div class="grid grid-3" id="medTiles"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Cart</h3></div>
+        <div id="cartList"><p class="text-dim small">Cart is empty. Select a medicine to begin.</p></div>
+        <div class="divider"></div>
+        <div class="field">
+          <label>Discount (${(DB.all("settings")[0]||{}).currency || "UGX"})</label>
+          <input type="number" id="discountInput" value="0" min="0">
+        </div>
+        <div class="flex-between"><span class="text-dim">Subtotal</span><b id="subtotalVal">0</b></div>
+        <div class="flex-between mt-8"><span class="text-dim">Total due</span><b id="totalVal" style="font-size:18px;color:var(--lemon);">0</b></div>
+        <div class="field mt-14">
+          <label>Payment method</label>
+          <select id="paymentMethod">
+            <option>Cash</option><option>Mobile Money</option><option>Card</option><option>Insurance</option>
+          </select>
+        </div>
+        <div class="field" id="patientLinkField">
+          <label>Link to patient (optional)</label>
+          <select id="saleLinkPatient"><option value="">Walk-in / no patient record</option></select>
+        </div>
+        <button class="btn btn-primary btn-block" id="completeSaleBtn">Complete sale & receive payment</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="invTab">
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Medicine & stock database</h3>
+        <div class="flex gap-10">
+          <input class="search-input" id="invSearch" placeholder="Search medicines...">
+          <button class="btn btn-primary" id="addMedBtn">&#10133; Add medicine</button>
+        </div>
+      </div>
+      <div class="grid grid-2 mt-8">
+        <div class="card"><div class="card-title">Low stock</div><div class="stat-value" id="lowStockCount" style="color:var(--warn);">0</div></div>
+        <div class="card"><div class="card-title">Expiring within 30 days</div><div class="stat-value" id="expiringCount" style="color:var(--danger);">0</div></div>
+      </div>
+      <div class="table-wrap mt-14">
+        <table>
+          <thead><tr><th>Name</th><th>Category</th><th>Supplier</th><th>Batch</th><th>Expiry</th><th>Buying</th><th>Selling</th><th>Qty</th><th></th></tr></thead>
+          <tbody id="invBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+`;
+
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  document.getElementById(t.dataset.tab).classList.add("active");
+});
+
+document.body.insertAdjacentHTML("beforeend", `
+<div class="modal-backdrop" id="medModal">
+  <div class="modal modal-lg">
+    <div class="modal-head"><h3 id="medModalTitle">Add medicine</h3><button class="modal-close" onclick="closeModal('medModal')">&times;</button></div>
+    <form id="medForm">
+      <input type="hidden" id="med_id">
+      <div class="field-row">
+        <div class="field"><label>Medicine name *</label><input type="text" id="med_name" required></div>
+        <div class="field"><label>Category</label><input type="text" id="med_category" placeholder="e.g. Antibiotic"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Barcode</label><input type="text" id="med_barcode" placeholder="Optional"></div>
+        <div class="field"><label>Supplier</label><input type="text" id="med_supplier"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Batch number</label><input type="text" id="med_batch"></div>
+        <div class="field"><label>Expiry date</label><input type="date" id="med_expiry"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Buying price *</label><input type="number" id="med_buy" min="0" required></div>
+        <div class="field"><label>Selling price *</label><input type="number" id="med_sell" min="0" required></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Quantity in stock *</label><input type="number" id="med_qty" min="0" required></div>
+        <div class="field"><label>Reorder level</label><input type="number" id="med_reorder" min="0" value="10"></div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Save medicine</button>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="receiptModal">
+  <div class="modal">
+    <div class="modal-head"><h3>Receipt</h3><button class="modal-close" onclick="closeModal('receiptModal')">&times;</button></div>
+    <div id="receiptArea"></div>
+    <button class="btn btn-primary btn-block mt-14" onclick="window.print()">Print receipt</button>
+  </div>
+</div>
+`);
+
+/* ---------------- shared helpers ---------------- */
+function stockOf(medicineId) {
+  return DB.query("inventory", i => i.medicine_id === medicineId).reduce((s,i) => s + Number(i.quantity||0), 0);
+}
+function reorderLevelOf(medicineId) {
+  const batches = DB.query("inventory", i => i.medicine_id === medicineId);
+  return batches.length ? Math.max(...batches.map(b => Number(b.reorder_level||10))) : 10;
+}
+function earliestExpiry(medicineId) {
+  const batches = DB.query("inventory", i => i.medicine_id === medicineId && i.quantity > 0).sort((a,b)=> new Date(a.expiry_date)-new Date(b.expiry_date));
+  return batches[0]?.expiry_date;
+}
+
+/* ---------------- POS ---------------- */
+let cart = []; // {medicine_id, name, price, qty, stock}
+
+function renderMedTiles(filter="") {
+  const meds = DB.all("medicines").filter(m => !filter || m.name.toLowerCase().includes(filter.toLowerCase()) || (m.barcode||"").includes(filter));
+  const wrap = document.getElementById("medTiles");
+  if (meds.length === 0) {
+    wrap.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="glyph">&#128138;</div>No medicines found. Add stock in the Inventory tab.</div>`;
+    return;
+  }
+  wrap.innerHTML = meds.map(m => {
+    const stock = stockOf(m.id);
+    return `<div class="med-tile" onclick="addToCart('${m.id}')">
+      <b>${escapeHtml(m.name)}</b>
+      <span>${fmtMoney(m.selling_price)}</span>
+      <span class="${stock<=0?'stock-out':stock<=reorderLevelOf(m.id)?'stock-low':''}">${stock} in stock</span>
+    </div>`;
+  }).join("");
+}
+
+function addToCart(medicineId) {
+  const med = DB.find("medicines", medicineId);
+  const stock = stockOf(medicineId);
+  if (stock <= 0) { Notify.toast("Out of stock", `${med.name} has no available stock.`, "warn"); return; }
+  const existing = cart.find(c => c.medicine_id === medicineId);
+  if (existing) {
+    if (existing.qty + 1 > stock) { Notify.toast("Stock limit reached", `Only ${stock} units of ${med.name} available.`, "warn"); return; }
+    existing.qty++;
+  } else {
+    cart.push({ medicine_id: medicineId, name: med.name, price: Number(med.selling_price), qty: 1, stock });
+  }
+  renderCart();
+}
+
+function renderCart() {
+  const list = document.getElementById("cartList");
+  if (cart.length === 0) { list.innerHTML = `<p class="text-dim small">Cart is empty. Select a medicine to begin.</p>`; }
+  else {
+    list.innerHTML = cart.map((c, idx) => `
+      <div class="cart-row">
+        <div><b>${escapeHtml(c.name)}</b><div class="text-dim small">${fmtMoney(c.price)} each</div></div>
+        <div class="qty-ctrl">
+          <button onclick="changeQty(${idx}, -1)">-</button>
+          <span>${c.qty}</span>
+          <button onclick="changeQty(${idx}, 1)">+</button>
+          <button onclick="removeFromCart(${idx})" style="color:var(--danger); margin-left:6px;">&times;</button>
+        </div>
+      </div>
+    `).join("");
+  }
+  const subtotal = cart.reduce((s,c) => s + c.price*c.qty, 0);
+  const discount = Number(document.getElementById("discountInput").value || 0);
+  const total = Math.max(subtotal - discount, 0);
+  document.getElementById("subtotalVal").textContent = fmtMoney(subtotal);
+  document.getElementById("totalVal").textContent = fmtMoney(total);
+}
+function changeQty(idx, delta) {
+  const c = cart[idx];
+  const stock = stockOf(c.medicine_id);
+  if (c.qty + delta < 1) return removeFromCart(idx);
+  if (c.qty + delta > stock) { Notify.toast("Stock limit reached", `Only ${stock} units available.`, "warn"); return; }
+  c.qty += delta;
+  renderCart();
+}
+function removeFromCart(idx) { cart.splice(idx,1); renderCart(); }
+document.getElementById("discountInput").addEventListener("input", renderCart);
+
+document.getElementById("posSearch").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const val = e.target.value.trim();
+    const med = DB.all("medicines").find(m => m.barcode && m.barcode === val);
+    if (med) { addToCart(med.id); e.target.value = ""; renderMedTiles(); return; }
+    renderMedTiles(val);
+  }
+});
+document.getElementById("posSearch").addEventListener("input", (e) => renderMedTiles(e.target.value));
+
+function populateSalePatientLink() {
+  const sel = document.getElementById("saleLinkPatient");
+  const patients = DB.all("patients");
+  sel.innerHTML = `<option value="">Walk-in / no patient record</option>` + patients.map(p => `<option value="${p.id}">${escapeHtml(p.full_name)} (${p.id})</option>`).join("");
+}
+
+document.getElementById("completeSaleBtn").onclick = () => {
+  if (cart.length === 0) { alert("Cart is empty."); return; }
+  const subtotal = cart.reduce((s,c) => s + c.price*c.qty, 0);
+  const discount = Number(document.getElementById("discountInput").value || 0);
+  const total = Math.max(subtotal - discount, 0);
+  const method = document.getElementById("paymentMethod").value;
+  const patientId = document.getElementById("saleLinkPatient").value || null;
+
+  const sale = {
+    id: DB.nextId("sales", "SAL"),
+    patient_id: patientId,
+    cashier_id: user.id,
+    subtotal, discount, total,
+    payment_method: method,
+    created_at: new Date().toISOString()
+  };
+  DB.insert("sales", sale);
+
+  cart.forEach(c => {
+    DB.insert("sale_items", {
+      id: DB.nextId("sale_items", "SIT"),
+      sale_id: sale.id, medicine_id: c.medicine_id, medicine_name: c.name,
+      quantity: c.qty, unit_price: c.price, line_total: c.qty*c.price
+    });
+    // deduct stock FIFO by earliest expiry
+    let remaining = c.qty;
+    const batches = DB.query("inventory", i => i.medicine_id === c.medicine_id && i.quantity > 0).sort((a,b)=> new Date(a.expiry_date||0)-new Date(b.expiry_date||0));
+    for (const b of batches) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, Number(b.quantity));
+      DB.update("inventory", b.id, { quantity: Number(b.quantity) - take });
+      remaining -= take;
+    }
+  });
+
+  DB.insert("payments", {
+    id: DB.nextId("payments", "PAY"),
+    sale_id: sale.id, patient_id: patientId,
+    amount: total, method, type: "pharmacy_sale",
+    received_by: user.id, created_at: new Date().toISOString()
+  });
+
+  DB.log("sale_completed", `Sale ${sale.id} for ${fmtMoney(total)} via ${method}`, user.id);
+  Notify.send({ title: "New pharmacy sale", message: `${fmtMoney(total)} sale completed by ${user.full_name}.`, target_role: "Accountant", type: "info" });
+
+  showReceipt(sale, cart, discount);
+  cart = [];
+  renderCart();
+  renderMedTiles();
+  renderInventory();
+};
+
+function showReceipt(sale, items, discount) {
+  const settings = DB.all("settings")[0] || {};
+  document.getElementById("receiptArea").innerHTML = `
+    <div style="text-align:center; margin-bottom:10px;">
+      <b>${settings.hospital_name || "Emmanuel Medical Center"}</b><br>
+      ${settings.hospital_location || "Entebbe, Uganda"}<br>
+      ${settings.hospital_phone || ""}
+    </div>
+    <hr>
+    Receipt: ${sale.id}<br>
+    Date: ${fmtDateTime(sale.created_at)}<br>
+    Served by: ${escapeHtml(user.full_name)}<br>
+    <hr>
+    ${items.map(i => `${i.qty} x ${escapeHtml(i.name)} — ${fmtMoney(i.price*i.qty)}`).join("<br>")}
+    <hr>
+    Subtotal: ${fmtMoney(sale.subtotal)}<br>
+    Discount: ${fmtMoney(discount)}<br>
+    <b>Total paid (${sale.payment_method}): ${fmtMoney(sale.total)}</b>
+    <hr>
+    <div style="text-align:center;">${settings.receipt_footer || "Thank you!"}</div>
+  `;
+  openModal("receiptModal");
+}
+
+/* ---------------- inventory ---------------- */
+function renderInventory(filter="") {
+  const meds = DB.all("medicines").filter(m => !filter || m.name.toLowerCase().includes(filter.toLowerCase()));
+  const body = document.getElementById("invBody");
+  let lowCount = 0, expiringCount = 0;
+  const rows = [];
+  meds.forEach(m => {
+    const batches = DB.query("inventory", i => i.medicine_id === m.id);
+    if (batches.length === 0) {
+      rows.push({ m, batch: null });
+    } else {
+      batches.forEach(b => rows.push({ m, batch: b }));
+    }
+  });
+
+  if (rows.length === 0) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="9">No medicines in the database yet.</td></tr>`;
+  } else {
+    body.innerHTML = rows.map(({m, batch}) => {
+      const qty = batch ? Number(batch.quantity) : 0;
+      const reorder = batch ? Number(batch.reorder_level||10) : 10;
+      const isLow = qty <= reorder;
+      const daysToExpiry = batch && batch.expiry_date ? Math.ceil((new Date(batch.expiry_date) - new Date())/86400000) : null;
+      const isExpiring = daysToExpiry !== null && daysToExpiry <= 30;
+      if (isLow) lowCount++;
+      if (isExpiring) expiringCount++;
+      return `
+        <tr>
+          <td>${escapeHtml(m.name)}</td>
+          <td>${escapeHtml(m.category||"—")}</td>
+          <td>${batch ? escapeHtml(batch.supplier||"—") : "—"}</td>
+          <td>${batch ? escapeHtml(batch.batch_number||"—") : "—"}</td>
+          <td class="${isExpiring?'stock-out':''}">${batch && batch.expiry_date ? fmtDate(batch.expiry_date) : "—"}</td>
+          <td>${fmtMoney(batch ? batch.buying_price : m.buying_price||0)}</td>
+          <td>${fmtMoney(m.selling_price)}</td>
+          <td class="${qty<=0?'stock-out':isLow?'stock-low':''}">${qty}</td>
+          <td class="flex gap-8">
+            <button class="btn btn-sm btn-outline" onclick="editMedicine('${m.id}')">Edit</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteMedicine('${m.id}')">Delete</button>
+          </td>
+        </tr>`;
+    }).join("");
+  }
+  document.getElementById("lowStockCount").textContent = lowCount;
+  document.getElementById("expiringCount").textContent = expiringCount;
+}
+
+document.getElementById("invSearch").addEventListener("input", (e) => renderInventory(e.target.value));
+document.getElementById("addMedBtn").onclick = () => {
+  document.getElementById("medForm").reset();
+  document.getElementById("med_id").value = "";
+  document.getElementById("medModalTitle").textContent = "Add medicine";
+  openModal("medModal");
+};
+
+function editMedicine(id) {
+  const m = DB.find("medicines", id);
+  const batch = DB.query("inventory", i => i.medicine_id === id)[0];
+  document.getElementById("medModalTitle").textContent = "Edit medicine";
+  document.getElementById("med_id").value = m.id;
+  document.getElementById("med_name").value = m.name;
+  document.getElementById("med_category").value = m.category||"";
+  document.getElementById("med_barcode").value = m.barcode||"";
+  document.getElementById("med_supplier").value = batch?.supplier||"";
+  document.getElementById("med_batch").value = batch?.batch_number||"";
+  document.getElementById("med_expiry").value = batch?.expiry_date||"";
+  document.getElementById("med_buy").value = batch?.buying_price||0;
+  document.getElementById("med_sell").value = m.selling_price;
+  document.getElementById("med_qty").value = batch?.quantity||0;
+  document.getElementById("med_reorder").value = batch?.reorder_level||10;
+  openModal("medModal");
+}
+
+function deleteMedicine(id) {
+  if (!confirm("Delete this medicine and its stock records? This cannot be undone.")) return;
+  DB.remove("medicines", id);
+  DB.all("inventory").filter(i => i.medicine_id === id).forEach(b => DB.remove("inventory", b.id));
+  DB.log("medicine_deleted", `Medicine ${id} deleted`, user.id);
+  renderInventory(); renderMedTiles();
+}
+
+document.getElementById("medForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = document.getElementById("med_id").value;
+  const name = document.getElementById("med_name").value.trim();
+  const category = document.getElementById("med_category").value.trim();
+  const barcode = document.getElementById("med_barcode").value.trim();
+  const sellPrice = Number(document.getElementById("med_sell").value);
+  const buyPrice = Number(document.getElementById("med_buy").value);
+  const qty = Number(document.getElementById("med_qty").value);
+  const reorder = Number(document.getElementById("med_reorder").value || 10);
+  const supplier = document.getElementById("med_supplier").value.trim();
+  const batchNo = document.getElementById("med_batch").value.trim();
+  const expiry = document.getElementById("med_expiry").value;
+
+  let medicineId = id;
+  if (id) {
+    DB.update("medicines", id, { name, category, barcode, selling_price: sellPrice });
+    const batch = DB.query("inventory", i => i.medicine_id === id)[0];
+    if (batch) DB.update("inventory", batch.id, { supplier, batch_number: batchNo, expiry_date: expiry, buying_price: buyPrice, quantity: qty, reorder_level: reorder });
+    else DB.insert("inventory", { id: DB.nextId("inventory","INV"), medicine_id: id, supplier, batch_number: batchNo, expiry_date: expiry, buying_price: buyPrice, quantity: qty, reorder_level: reorder, created_at: new Date().toISOString() });
+    DB.log("medicine_updated", `Medicine ${name} updated`, user.id);
+  } else {
+    const med = DB.insert("medicines", { id: DB.nextId("medicines","MED"), name, category, barcode, selling_price: sellPrice, buying_price: buyPrice, created_at: new Date().toISOString() });
+    DB.insert("inventory", { id: DB.nextId("inventory","INV"), medicine_id: med.id, supplier, batch_number: batchNo, expiry_date: expiry, buying_price: buyPrice, quantity: qty, reorder_level: reorder, created_at: new Date().toISOString() });
+    DB.log("medicine_added", `Medicine ${name} added with ${qty} units`, user.id);
+  }
+  closeModal("medModal");
+  renderInventory(); renderMedTiles();
+});
+
+/* ---------------- init ---------------- */
+renderMedTiles();
+renderInventory();
+populateSalePatientLink();
+
+const params = new URLSearchParams(location.search);
+if (params.get("action") === "sale") document.querySelector('[data-tab="posTab"]').click();
+</script>
+</body>
+</html>

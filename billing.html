@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Billing & Finance — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/notifications.js"></script>
+<script src="js/shell.js"></script>
+
+<script>
+const { user, contentEl } = renderShell({
+  activePage: "billing",
+  title: "Billing & Finance",
+  subtitle: "Invoices, payments, receipts and revenue at a glance."
+});
+
+contentEl.innerHTML = `
+  <div class="tabs">
+    <div class="tab active" data-tab="invTab">Invoices</div>
+    <div class="tab" data-tab="payTab">Payments & Revenue</div>
+  </div>
+
+  <div class="tab-panel active" id="invTab">
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Invoices</h3>
+        <div class="flex gap-10">
+          <select id="invStatusFilter"><option value="">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option></select>
+          <button class="btn btn-primary" id="createInvoiceBtn">&#10133; Create invoice</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Invoice</th><th>Patient</th><th>Items</th><th>Total</th><th>Status</th><th>Date</th><th></th></tr></thead>
+          <tbody id="invoiceBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="payTab">
+    <div class="grid grid-3">
+      <div class="card"><div class="card-title">Total revenue (all-time)</div><div class="stat-value" id="totalRevenue">0</div></div>
+      <div class="card"><div class="card-title">Paid invoices</div><div class="stat-value" id="paidCount">0</div></div>
+      <div class="card"><div class="card-title">Unpaid invoices</div><div class="stat-value" id="unpaidCount">0</div></div>
+    </div>
+    <div class="panel mt-20">
+      <div class="panel-head"><h3>Payment history</h3></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Receipt</th><th>Patient</th><th>Type</th><th>Amount</th><th>Method</th><th>Date</th></tr></thead>
+          <tbody id="paymentsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+`;
+
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  document.getElementById(t.dataset.tab).classList.add("active");
+});
+
+document.body.insertAdjacentHTML("beforeend", `
+<div class="modal-backdrop" id="invoiceModal">
+  <div class="modal modal-lg">
+    <div class="modal-head"><h3>Create invoice</h3><button class="modal-close" onclick="closeModal('invoiceModal')">&times;</button></div>
+    <div class="field"><label>Patient</label><select id="inv_patient"></select></div>
+    <div id="lineItems"></div>
+    <button type="button" class="btn btn-outline btn-sm mt-8" id="addLineBtn">&#10133; Add charge line</button>
+    <div class="divider"></div>
+    <div class="flex-between"><span class="text-dim">Total</span><b id="invTotalPreview" style="font-size:18px;color:var(--lemon);">0</b></div>
+    <button class="btn btn-primary btn-block mt-14" id="saveInvoiceBtn">Create invoice</button>
+  </div>
+</div>
+`);
+
+const chargeTypes = ["Consultation fee", "Pharmacy purchase", "Laboratory charge", "Admission charge", "Other"];
+let lineCounter = 0;
+
+function addLineItem(desc="", amount=0) {
+  lineCounter++;
+  const id = `line_${lineCounter}`;
+  document.getElementById("lineItems").insertAdjacentHTML("beforeend", `
+    <div class="field-row" id="${id}" style="align-items:end;">
+      <div class="field">
+        <label>Charge type</label>
+        <select class="line-desc">${chargeTypes.map(c => `<option ${c===desc?"selected":""}>${c}</option>`).join("")}</select>
+      </div>
+      <div class="field" style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Amount</label><input type="number" class="line-amount" value="${amount}" min="0"></div>
+        <button type="button" class="btn btn-danger btn-sm" style="height:38px; margin-top:22px;" onclick="document.getElementById('${id}').remove(); updateInvTotal();">&times;</button>
+      </div>
+    </div>
+  `);
+  document.querySelectorAll(".line-amount").forEach(el => el.oninput = updateInvTotal);
+}
+function updateInvTotal() {
+  const total = [...document.querySelectorAll(".line-amount")].reduce((s,el) => s + Number(el.value||0), 0);
+  document.getElementById("invTotalPreview").textContent = fmtMoney(total);
+}
+
+document.getElementById("addLineBtn").onclick = () => addLineItem();
+
+document.getElementById("createInvoiceBtn").onclick = () => {
+  const sel = document.getElementById("inv_patient");
+  sel.innerHTML = `<option value="">Walk-in / no patient record</option>` + DB.all("patients").map(p => `<option value="${p.id}">${escapeHtml(p.full_name)} (${p.id})</option>`).join("");
+  document.getElementById("lineItems").innerHTML = "";
+  lineCounter = 0;
+  addLineItem("Consultation fee", 0);
+  updateInvTotal();
+  openModal("invoiceModal");
+};
+
+document.getElementById("saveInvoiceBtn").onclick = () => {
+  const lineEls = [...document.querySelectorAll("#lineItems > div")];
+  const items = lineEls.map(el => ({
+    description: el.querySelector(".line-desc").value,
+    amount: Number(el.querySelector(".line-amount").value || 0)
+  })).filter(i => i.amount > 0);
+  if (items.length === 0) { alert("Add at least one charge line with an amount."); return; }
+  const total = items.reduce((s,i) => s + i.amount, 0);
+  const patientId = document.getElementById("inv_patient").value || null;
+
+  const invoice = {
+    id: DB.nextId("invoices", "INVC"),
+    patient_id: patientId,
+    items,
+    total,
+    status: "unpaid",
+    created_by: user.id,
+    created_at: new Date().toISOString()
+  };
+  DB.insert("invoices", invoice);
+  DB.log("invoice_created", `Invoice ${invoice.id} created for ${fmtMoney(total)}`, user.id);
+  Notify.send({ title: "New invoice created", message: `Invoice ${invoice.id} for ${fmtMoney(total)} awaits payment.`, target_role: "Accountant", type: "info" });
+  closeModal("invoiceModal");
+  renderInvoices();
+};
+
+function renderInvoices() {
+  const filter = document.getElementById("invStatusFilter").value;
+  let invoices = DB.all("invoices").sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+  if (filter) invoices = invoices.filter(i => i.status === filter);
+
+  const body = document.getElementById("invoiceBody");
+  if (invoices.length === 0) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="7">No invoices yet.</td></tr>`;
+    return;
+  }
+  body.innerHTML = invoices.map(inv => {
+    const patient = DB.find("patients", inv.patient_id);
+    return `
+      <tr>
+        <td>${inv.id}</td>
+        <td>${patient ? escapeHtml(patient.full_name) : "Walk-in"}</td>
+        <td>${inv.items.map(i=>i.description).join(", ")}</td>
+        <td>${fmtMoney(inv.total)}</td>
+        <td><span class="badge ${inv.status==='paid'?'badge-good':'badge-warn'}">${inv.status}</span></td>
+        <td>${fmtDate(inv.created_at)}</td>
+        <td>${inv.status === "unpaid" ? `<button class="btn btn-sm btn-primary" onclick="markPaid('${inv.id}')">Mark paid</button>` : `<span class="text-dim small">Settled</span>`}</td>
+      </tr>`;
+  }).join("");
+}
+
+function markPaid(id) {
+  const inv = DB.find("invoices", id);
+  const method = prompt("Payment method received? (Cash / Mobile Money / Card / Insurance)", "Cash");
+  if (!method) return;
+  DB.update("invoices", id, { status: "paid" });
+  DB.insert("payments", {
+    id: DB.nextId("payments", "PAY"),
+    invoice_id: id, patient_id: inv.patient_id,
+    amount: inv.total, method, type: "invoice_payment",
+    received_by: user.id, created_at: new Date().toISOString()
+  });
+  DB.log("invoice_paid", `Invoice ${id} paid via ${method}`, user.id);
+  Notify.send({ title: "Invoice paid", message: `Invoice ${id} for ${fmtMoney(inv.total)} was paid.`, target_role: "Accountant", type: "info" });
+  renderInvoices(); renderPayments();
+}
+
+function renderPayments() {
+  const payments = DB.all("payments").sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+  const body = document.getElementById("paymentsBody");
+  if (payments.length === 0) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="6">No payments recorded yet.</td></tr>`;
+  } else {
+    body.innerHTML = payments.map(p => {
+      const patient = DB.find("patients", p.patient_id);
+      return `<tr>
+        <td>${p.id}</td>
+        <td>${patient ? escapeHtml(patient.full_name) : "Walk-in"}</td>
+        <td>${p.type === "pharmacy_sale" ? "Pharmacy sale" : "Invoice payment"}</td>
+        <td>${fmtMoney(p.amount)}</td>
+        <td>${p.method}</td>
+        <td>${fmtDateTime(p.created_at)}</td>
+      </tr>`;
+    }).join("");
+  }
+  document.getElementById("totalRevenue").textContent = fmtMoney(payments.reduce((s,p)=>s+Number(p.amount||0),0));
+  document.getElementById("paidCount").textContent = DB.all("invoices").filter(i=>i.status==="paid").length;
+  document.getElementById("unpaidCount").textContent = DB.all("invoices").filter(i=>i.status==="unpaid").length;
+}
+
+document.getElementById("invStatusFilter").addEventListener("change", renderInvoices);
+renderInvoices();
+renderPayments();
+
+const params = new URLSearchParams(location.search);
+if (params.get("action") === "invoice") document.getElementById("createInvoiceBtn").click();
+</script>
+</body>
+</html>

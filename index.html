@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="login-wrap">
+  <div class="login-hero">
+    <div style="position:relative; z-index:1;">
+      <div class="flex gap-10" style="align-items:center;">
+        <div class="brand-mark" style="width:46px;height:46px;font-size:16px;">EM</div>
+        <div>
+          <b style="font-family:var(--font-display); font-size:18px; display:block;">Emmanuel Medical Center</b>
+          <span style="color:var(--text-mid); font-size:13px;">Entebbe, Uganda</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="position:relative; z-index:1;">
+      <h2 style="font-size:34px; max-width:480px; line-height:1.2;">One system for every ward, till and record.</h2>
+      <p class="text-mid" style="max-width:440px; margin-top:12px; font-size:14.5px;">
+        Registration, consultations, pharmacy sales, laboratory results and billing —
+        run from a single secure hospital management &amp; POS platform.
+      </p>
+    </div>
+
+    <svg class="pulse-line" viewBox="0 0 600 110" style="position:relative;z-index:1;">
+      <polyline points="0,55 90,55 115,15 145,95 175,55 260,55 280,30 300,80 320,55 600,55"
+        fill="none" stroke="#CFF13B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+    </svg>
+  </div>
+
+  <div class="login-form-side">
+    <div class="login-card">
+      <h2 style="font-size:22px;">Staff sign in</h2>
+      <p class="text-dim small mt-8">Enter your credentials to access the system.</p>
+
+      <div class="role-grid">
+        <div class="role-pill">Administrator</div>
+        <div class="role-pill">Doctor</div>
+        <div class="role-pill">Nurse</div>
+        <div class="role-pill">Receptionist</div>
+        <div class="role-pill">Pharmacist</div>
+        <div class="role-pill">Accountant</div>
+      </div>
+
+      <form id="loginForm">
+        <div class="field">
+          <label for="username">Username</label>
+          <input type="text" id="username" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" autocomplete="current-password" required>
+        </div>
+        <p class="error-text" id="loginError"></p>
+        <button type="submit" class="btn btn-primary btn-block mt-8">Sign in</button>
+      </form>
+
+      <div class="flex-between mt-14">
+        <button class="btn btn-ghost btn-sm" id="forgotBtn">Forgot password?</button>
+        <a href="about.html" class="small text-dim">About this hospital &rarr;</a>
+      </div>
+
+      <div class="divider"></div>
+      <p class="hint">Default administrator account on first run: <b>admin</b> / <b>admin123</b> — you will be asked to set a new password immediately after signing in.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Forgot password modal -->
+<div class="modal-backdrop" id="forgotModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Reset password</h3>
+      <button class="modal-close" onclick="closeModal('forgotModal')">&times;</button>
+    </div>
+    <p class="text-dim small mt-8" style="margin-bottom:14px;">
+      For security, password resets are confirmed by an administrator. Enter your username and a new
+      password — this will be logged in the security log and the administrator will be notified.
+    </p>
+    <div class="field">
+      <label>Username</label>
+      <input type="text" id="fpUsername" required>
+    </div>
+    <div class="field">
+      <label>New password</label>
+      <input type="password" id="fpPassword" required minlength="4">
+    </div>
+    <p class="error-text" id="fpError"></p>
+    <button class="btn btn-primary btn-block" id="fpSubmit">Reset password</button>
+  </div>
+</div>
+
+<!-- Force password change modal -->
+<div class="modal-backdrop" id="changePwModal">
+  <div class="modal">
+    <div class="modal-head"><h3>Set a new password</h3></div>
+    <p class="text-dim small mt-8" style="margin-bottom:14px;">
+      For your account's security, choose a new password before continuing.
+    </p>
+    <div class="field">
+      <label>New password</label>
+      <input type="password" id="newPw" minlength="4" required>
+    </div>
+    <div class="field">
+      <label>Confirm new password</label>
+      <input type="password" id="confirmPw" minlength="4" required>
+    </div>
+    <p class="error-text" id="pwChangeError"></p>
+    <button class="btn btn-primary btn-block" id="pwChangeSubmit">Save & continue</button>
+  </div>
+</div>
+
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script>
+  // if already logged in and password already set, skip straight to dashboard
+  (function () {
+    const u = Auth.currentUser();
+    if (u && !u.must_change_password) window.location.href = "dashboard.html";
+  })();
+
+  let pendingUser = null;
+
+  document.getElementById("loginForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+    const result = Auth.login(username, password);
+    const errEl = document.getElementById("loginError");
+    if (!result.ok) {
+      errEl.textContent = result.message;
+      errEl.style.display = "block";
+      return;
+    }
+    if (result.mustChange) {
+      pendingUser = result.user;
+      openModal("changePwModal");
+    } else {
+      window.location.href = "dashboard.html";
+    }
+  });
+
+  document.getElementById("forgotBtn").onclick = () => openModal("forgotModal");
+
+  document.getElementById("fpSubmit").onclick = () => {
+    const username = document.getElementById("fpUsername").value.trim();
+    const pw = document.getElementById("fpPassword").value;
+    const errEl = document.getElementById("fpError");
+    if (!username || pw.length < 4) {
+      errEl.textContent = "Enter a username and a password of at least 4 characters.";
+      errEl.style.display = "block";
+      return;
+    }
+    const res = Auth.resetPassword(username, pw);
+    if (!res.ok) {
+      errEl.textContent = res.message;
+      errEl.style.display = "block";
+      return;
+    }
+    closeModal("forgotModal");
+    alert("Password reset successful. You can now sign in with your new password.");
+  };
+
+  document.getElementById("pwChangeSubmit").onclick = () => {
+    const p1 = document.getElementById("newPw").value;
+    const p2 = document.getElementById("confirmPw").value;
+    const errEl = document.getElementById("pwChangeError");
+    if (p1.length < 4) { errEl.textContent = "Password must be at least 4 characters."; errEl.style.display = "block"; return; }
+    if (p1 !== p2) { errEl.textContent = "Passwords do not match."; errEl.style.display = "block"; return; }
+    DB.update("users", pendingUser.id, { password: p1, must_change_password: false });
+    DB.log("password_changed", `${pendingUser.username} set a new password`, pendingUser.id);
+    window.location.href = "dashboard.html";
+  };
+</script>
+</body>
+</html>

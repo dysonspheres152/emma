@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/notifications.js"></script>
+<script src="js/shell.js"></script>
+
+<script>
+const _authedUser = Auth.currentUser();
+const { user, contentEl } = renderShell({
+  activePage: "dashboard",
+  title: _authedUser ? `Welcome back, ${_authedUser.full_name.split(" ")[0]}` : "Dashboard",
+  subtitle: "Here's what's happening at the hospital today."
+});
+
+function todayStr(iso) {
+  const d = new Date(iso);
+  const t = new Date();
+  return d.toDateString() === t.toDateString();
+}
+
+function computeStats() {
+  const patients = DB.all("patients");
+  const appointments = DB.all("appointments").filter(a => todayStr(a.appointment_date));
+  const sales = DB.all("sales").filter(s => todayStr(s.created_at));
+  const invoices = DB.all("invoices");
+  const inventory = DB.all("inventory");
+
+  const todayIncome = sales.reduce((sum, s) => sum + Number(s.total || 0), 0)
+    + DB.all("payments").filter(p => todayStr(p.created_at)).reduce((s, p) => s + Number(p.amount || 0), 0);
+
+  const pendingBills = invoices.filter(i => i.status !== "paid").length;
+  const lowStock = inventory.filter(i => Number(i.quantity) <= Number(i.reorder_level || 10)).length;
+
+  return {
+    totalPatients: patients.length,
+    todayAppointments: appointments.length,
+    todayIncome,
+    pendingBills,
+    lowStock,
+    bedsAvailable: DB.all("settings")[0]?.total_beds ? (DB.all("settings")[0].total_beds - patients.filter(p=>p.admitted).length) : "—"
+  };
+}
+
+function renderStats() {
+  const s = computeStats();
+  return `
+    <div class="grid grid-4">
+      <div class="card">
+        <div class="stat-icon">&#128100;</div>
+        <div class="card-title">Total patients</div>
+        <div class="stat-value">${s.totalPatients}</div>
+        <div class="stat-delta text-dim">Registered all-time</div>
+      </div>
+      <div class="card">
+        <div class="stat-icon">&#128197;</div>
+        <div class="card-title">Today's appointments</div>
+        <div class="stat-value">${s.todayAppointments}</div>
+        <div class="stat-delta text-dim">Scheduled for today</div>
+      </div>
+      <div class="card">
+        <div class="stat-icon">&#128176;</div>
+        <div class="card-title">Today's income</div>
+        <div class="stat-value">${fmtMoney(s.todayIncome)}</div>
+        <div class="stat-delta text-dim">Sales + payments</div>
+      </div>
+      <div class="card">
+        <div class="stat-icon">&#128203;</div>
+        <div class="card-title">Pending bills</div>
+        <div class="stat-value">${s.pendingBills}</div>
+        <div class="stat-delta ${s.pendingBills>0?'':'' }" style="color:${s.pendingBills>0?'var(--warn)':'var(--good)'}">${s.pendingBills>0? 'Needs follow-up':'All settled'}</div>
+      </div>
+    </div>
+
+    <div class="grid grid-2 mt-20">
+      <div class="card">
+        <div class="card-title">Pharmacy stock health</div>
+        <div class="stat-value" style="color:${s.lowStock>0?'var(--warn)':'var(--good)'}">${s.lowStock} item(s) low</div>
+        <div class="stat-delta text-dim">Items at or below reorder level</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Available beds</div>
+        <div class="stat-value">${s.bedsAvailable}</div>
+        <div class="stat-delta text-dim">Configure total beds in Settings</div>
+      </div>
+    </div>
+  `;
+}
+
+function quickActions() {
+  return `
+    <div class="panel mt-20">
+      <div class="panel-head"><h3>Quick actions</h3></div>
+      <div class="grid grid-4">
+        <button class="btn btn-primary" onclick="location.href='patients.html?action=register'">&#10133; Register patient</button>
+        <button class="btn btn-outline" onclick="location.href='pharmacy.html?action=sale'">&#128722; New sale</button>
+        <button class="btn btn-outline" onclick="location.href='patients.html?action=appointment'">&#128197; Add appointment</button>
+        <button class="btn btn-outline" onclick="location.href='billing.html?action=invoice'">&#128196; Create invoice</button>
+      </div>
+    </div>
+  `;
+}
+
+function last7Days() {
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    days.push(d);
+  }
+  return days;
+}
+
+function chartsSection() {
+  return `
+    <div class="grid grid-2 mt-20">
+      <div class="panel">
+        <div class="panel-head"><h3>Daily revenue (7 days)</h3></div>
+        <div class="chart-box"><canvas id="revChart"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Patient growth (7 days)</h3></div>
+        <div class="chart-box"><canvas id="growthChart"></canvas></div>
+      </div>
+    </div>
+    <div class="panel mt-20">
+      <div class="panel-head"><h3>Department performance</h3></div>
+      <div class="chart-box"><canvas id="deptChart"></canvas></div>
+    </div>
+  `;
+}
+
+function drawCharts() {
+  const days = last7Days();
+  const labels = days.map(d => d.toLocaleDateString("en-GB", { weekday: "short" }));
+  const sales = DB.all("sales");
+  const payments = DB.all("payments");
+  const patients = DB.all("patients");
+
+  const revData = days.map(d => {
+    const dayStr = d.toDateString();
+    const s = sales.filter(x => new Date(x.created_at).toDateString() === dayStr).reduce((a, b) => a + Number(b.total || 0), 0);
+    const p = payments.filter(x => new Date(x.created_at).toDateString() === dayStr).reduce((a, b) => a + Number(b.amount || 0), 0);
+    return s + p;
+  });
+
+  const growthData = days.map(d => {
+    const dayStr = d.toDateString();
+    return patients.filter(x => new Date(x.created_at).toDateString() === dayStr).length;
+  });
+
+  const chartTheme = {
+    color: "#B7C4D6",
+    grid: "rgba(255,255,255,0.05)"
+  };
+
+  new Chart(document.getElementById("revChart"), {
+    type: "line",
+    data: { labels, datasets: [{ label: "Revenue", data: revData, borderColor: "#CFF13B", backgroundColor: "rgba(207,241,59,0.12)", tension: 0.35, fill: true }] },
+    options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { color: chartTheme.color }, grid: { color: chartTheme.grid } }, y: { ticks: { color: chartTheme.color }, grid: { color: chartTheme.grid } } } }
+  });
+
+  new Chart(document.getElementById("growthChart"), {
+    type: "bar",
+    data: { labels, datasets: [{ label: "New patients", data: growthData, backgroundColor: "#1E74D6", borderRadius: 6 }] },
+    options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { color: chartTheme.color }, grid: { color: chartTheme.grid } }, y: { ticks: { color: chartTheme.color }, grid: { color: chartTheme.grid }, beginAtZero: true } } }
+  });
+
+  const departments = DB.all("departments");
+  const appts = DB.all("appointments");
+  const deptData = departments.map(d => appts.filter(a => a.department_id === d.id).length);
+
+  new Chart(document.getElementById("deptChart"), {
+    type: "bar",
+    data: { labels: departments.map(d => d.name), datasets: [{ label: "Appointments", data: deptData, backgroundColor: "#CFF13B", borderRadius: 6 }] },
+    options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { ticks: { color: chartTheme.color }, grid: { color: chartTheme.grid }, beginAtZero: true }, y: { ticks: { color: chartTheme.color }, grid: { color: "transparent" } } } }
+  });
+}
+
+contentEl.innerHTML = renderStats() + quickActions() + chartsSection();
+drawCharts();
+</script>
+</body>
+</html>

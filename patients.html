@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patients & Appointments — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/notifications.js"></script>
+<script src="js/shell.js"></script>
+
+<script>
+const { user, contentEl } = renderShell({
+  activePage: "patients",
+  title: "Patients & Appointments",
+  subtitle: "Registration, patient records and the reception desk."
+});
+
+contentEl.innerHTML = `
+  <div class="tabs">
+    <div class="tab active" data-tab="patientsTab">Patients</div>
+    <div class="tab" data-tab="apptTab">Appointments & Queue</div>
+  </div>
+
+  <div class="tab-panel active" id="patientsTab">
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Patient records</h3>
+        <div class="flex gap-10">
+          <input class="search-input" id="patientSearch" placeholder="Search by name, ID or phone...">
+          <button class="btn btn-primary" id="openRegisterBtn">&#10133; Register patient</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Patient ID</th><th>Name</th><th>Gender</th><th>DOB</th><th>Phone</th><th>Insurance</th><th>Registered</th><th></th></tr></thead>
+          <tbody id="patientsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="apptTab">
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Appointments</h3>
+        <div class="flex gap-10">
+          <input type="date" id="apptDateFilter">
+          <button class="btn btn-primary" id="openApptBtn">&#10133; Book appointment</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Patient</th><th>Department</th><th>Doctor</th><th>Status</th><th></th></tr></thead>
+          <tbody id="apptBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel mt-20">
+      <div class="panel-head"><h3>Waiting queue (checked-in, today)</h3></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Patient</th><th>Department</th><th>Doctor</th><th>Checked in</th><th></th></tr></thead>
+          <tbody id="queueBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+`;
+
+/* ---------------- tabs ---------------- */
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  document.getElementById(t.dataset.tab).classList.add("active");
+});
+
+/* ---------------- modals (built dynamically) ---------------- */
+document.body.insertAdjacentHTML("beforeend", `
+<div class="modal-backdrop" id="registerModal">
+  <div class="modal modal-lg">
+    <div class="modal-head"><h3>Register patient</h3><button class="modal-close" onclick="closeModal('registerModal')">&times;</button></div>
+    <form id="registerForm">
+      <div class="field-row">
+        <div class="field"><label>Full name *</label><input type="text" id="p_name" required></div>
+        <div class="field"><label>Gender *</label><select id="p_gender" required><option value="">Select</option><option>Male</option><option>Female</option></select></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Date of birth *</label><input type="date" id="p_dob" required></div>
+        <div class="field"><label>Phone *</label><input type="tel" id="p_phone" required></div>
+      </div>
+      <div class="field"><label>Address</label><input type="text" id="p_address"></div>
+      <div class="field-row">
+        <div class="field"><label>Emergency contact name</label><input type="text" id="p_ec_name"></div>
+        <div class="field"><label>Emergency contact phone</label><input type="tel" id="p_ec_phone"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Insurance provider</label><input type="text" id="p_ins_provider"></div>
+        <div class="field"><label>Insurance number</label><input type="text" id="p_ins_number"></div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block mt-8">Save patient</button>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="apptModal">
+  <div class="modal">
+    <div class="modal-head"><h3>Book appointment</h3><button class="modal-close" onclick="closeModal('apptModal')">&times;</button></div>
+    <form id="apptForm">
+      <div class="field"><label>Patient *</label><select id="a_patient" required></select></div>
+      <div class="field-row">
+        <div class="field"><label>Department *</label><select id="a_dept" required></select></div>
+        <div class="field"><label>Doctor *</label><select id="a_doctor" required></select></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Date *</label><input type="date" id="a_date" required></div>
+        <div class="field"><label>Time *</label><input type="time" id="a_time" required></div>
+      </div>
+      <div class="field"><label>Reason for visit</label><textarea id="a_reason" rows="2"></textarea></div>
+      <button type="submit" class="btn btn-primary btn-block mt-8">Book appointment</button>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="profileModal">
+  <div class="modal modal-lg" id="profileModalBody"></div>
+</div>
+`);
+
+/* ---------------- patients ---------------- */
+function renderPatients(filter = "") {
+  const patients = DB.all("patients").filter(p =>
+    !filter || p.full_name.toLowerCase().includes(filter.toLowerCase()) ||
+    p.id.toLowerCase().includes(filter.toLowerCase()) || (p.phone || "").includes(filter)
+  ).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+
+  const body = document.getElementById("patientsBody");
+  if (patients.length === 0) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="8">No patients registered yet. Click "Register patient" to add the first record.</td></tr>`;
+    return;
+  }
+  body.innerHTML = patients.map(p => `
+    <tr>
+      <td><span class="badge badge-info">${p.id}</span></td>
+      <td>${escapeHtml(p.full_name)}</td>
+      <td>${p.gender}</td>
+      <td>${fmtDate(p.dob)}</td>
+      <td>${escapeHtml(p.phone)}</td>
+      <td>${p.insurance_provider ? escapeHtml(p.insurance_provider) : '<span class="text-dim">None</span>'}</td>
+      <td>${fmtDate(p.created_at)}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="openProfile('${p.id}')">View profile</button></td>
+    </tr>
+  `).join("");
+}
+
+document.getElementById("patientSearch").addEventListener("input", (e) => renderPatients(e.target.value));
+document.getElementById("openRegisterBtn").onclick = () => openModal("registerModal");
+
+document.getElementById("registerForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const record = {
+    id: DB.nextId("patients", "PAT"),
+    full_name: document.getElementById("p_name").value.trim(),
+    gender: document.getElementById("p_gender").value,
+    dob: document.getElementById("p_dob").value,
+    phone: document.getElementById("p_phone").value.trim(),
+    address: document.getElementById("p_address").value.trim(),
+    emergency_contact_name: document.getElementById("p_ec_name").value.trim(),
+    emergency_contact_phone: document.getElementById("p_ec_phone").value.trim(),
+    insurance_provider: document.getElementById("p_ins_provider").value.trim(),
+    insurance_number: document.getElementById("p_ins_number").value.trim(),
+    registered_by: user.id,
+    created_at: new Date().toISOString()
+  };
+  DB.insert("patients", record);
+  DB.log("patient_registered", `${record.full_name} registered`, user.id);
+  Notify.send({ title: "New patient registered", message: `${record.full_name} (${record.id}) was registered by ${user.full_name}.`, target_role: "all", type: "info" });
+  e.target.reset();
+  closeModal("registerModal");
+  renderPatients();
+  populatePatientSelect();
+});
+
+/* ---------------- appointments ---------------- */
+function populateDeptDoctorSelects() {
+  const deptSel = document.getElementById("a_dept");
+  deptSel.innerHTML = `<option value="">Select</option>` + DB.all("departments").map(d => `<option value="${d.id}">${d.name}</option>`).join("");
+  const docSel = document.getElementById("a_doctor");
+  const doctors = DB.all("doctors");
+  docSel.innerHTML = doctors.length
+    ? `<option value="">Select</option>` + doctors.map(d => `<option value="${d.id}">Dr. ${escapeHtml(d.full_name)} — ${escapeHtml(d.specialty||"General")}</option>`).join("")
+    : `<option value="">No doctors added yet — add one in Reports, Users & Settings</option>`;
+}
+
+function populatePatientSelect() {
+  const sel = document.getElementById("a_patient");
+  const patients = DB.all("patients");
+  sel.innerHTML = patients.length
+    ? `<option value="">Select</option>` + patients.map(p => `<option value="${p.id}">${escapeHtml(p.full_name)} (${p.id})</option>`).join("")
+    : `<option value="">No patients registered yet</option>`;
+}
+
+document.getElementById("openApptBtn").onclick = () => {
+  populateDeptDoctorSelects(); populatePatientSelect();
+  openModal("apptModal");
+};
+
+document.getElementById("apptForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const patient = DB.find("patients", document.getElementById("a_patient").value);
+  const doctor = DB.find("doctors", document.getElementById("a_doctor").value);
+  const dept = DB.find("departments", document.getElementById("a_dept").value);
+  if (!patient || !doctor || !dept) { alert("Please select patient, department and doctor."); return; }
+
+  const record = {
+    id: DB.nextId("appointments", "APT"),
+    patient_id: patient.id,
+    doctor_id: doctor.id,
+    department_id: dept.id,
+    appointment_date: document.getElementById("a_date").value,
+    appointment_time: document.getElementById("a_time").value,
+    reason: document.getElementById("a_reason").value.trim(),
+    status: "scheduled",
+    checked_in_at: null,
+    created_by: user.id,
+    created_at: new Date().toISOString()
+  };
+  DB.insert("appointments", record);
+  DB.log("appointment_booked", `Appointment for ${patient.full_name} with Dr. ${doctor.full_name}`, user.id);
+  Notify.send({ title: "Appointment booked", message: `${patient.full_name} booked with Dr. ${doctor.full_name} on ${record.appointment_date}.`, target_role: "Doctor", type: "info" });
+  e.target.reset();
+  closeModal("apptModal");
+  renderAppointments();
+});
+
+function renderAppointments() {
+  const filterDate = document.getElementById("apptDateFilter").value;
+  let appts = DB.all("appointments").sort((a,b) => new Date(a.appointment_date+"T"+a.appointment_time) - new Date(b.appointment_date+"T"+b.appointment_time));
+  if (filterDate) appts = appts.filter(a => a.appointment_date === filterDate);
+
+  const body = document.getElementById("apptBody");
+  if (appts.length === 0) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="6">No appointments found. Book one with the button above.</td></tr>`;
+    return;
+  }
+  body.innerHTML = appts.map(a => {
+    const patient = DB.find("patients", a.patient_id);
+    const doctor = DB.find("doctors", a.doctor_id);
+    const dept = DB.find("departments", a.department_id);
+    const statusBadge = {
+      scheduled: '<span class="badge badge-info">Scheduled</span>',
+      "checked-in": '<span class="badge badge-warn">Checked in</span>',
+      completed: '<span class="badge badge-good">Completed</span>',
+      cancelled: '<span class="badge badge-danger">Cancelled</span>'
+    }[a.status] || a.status;
+    return `
+      <tr>
+        <td>${a.appointment_date} ${a.appointment_time}</td>
+        <td>${patient ? escapeHtml(patient.full_name) : "—"}</td>
+        <td>${dept ? dept.name : "—"}</td>
+        <td>${doctor ? "Dr. " + escapeHtml(doctor.full_name) : "—"}</td>
+        <td>${statusBadge}</td>
+        <td class="flex gap-8">
+          ${a.status === "scheduled" ? `<button class="btn btn-sm btn-outline" onclick="checkIn('${a.id}')">Check-in</button>` : ""}
+          ${a.status !== "cancelled" && a.status !== "completed" ? `<button class="btn btn-sm btn-danger" onclick="cancelAppt('${a.id}')">Cancel</button>` : ""}
+        </td>
+      </tr>`;
+  }).join("");
+}
+
+function checkIn(id) {
+  DB.update("appointments", id, { status: "checked-in", checked_in_at: new Date().toISOString() });
+  DB.log("appointment_checkin", `Appointment ${id} checked in`, user.id);
+  renderAppointments(); renderQueue();
+}
+function cancelAppt(id) {
+  if (!confirm("Cancel this appointment?")) return;
+  DB.update("appointments", id, { status: "cancelled" });
+  DB.log("appointment_cancelled", `Appointment ${id} cancelled`, user.id);
+  renderAppointments(); renderQueue();
+}
+
+function renderQueue() {
+  const today = new Date().toDateString();
+  const queue = DB.all("appointments").filter(a => a.status === "checked-in" && new Date(a.appointment_date).toDateString() === today)
+    .sort((a,b) => new Date(a.checked_in_at) - new Date(b.checked_in_at));
+  const body = document.getElementById("queueBody");
+  if (queue.length === 0) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="5">No one is currently waiting.</td></tr>`;
+    return;
+  }
+  body.innerHTML = queue.map((a, i) => {
+    const patient = DB.find("patients", a.patient_id);
+    const doctor = DB.find("doctors", a.doctor_id);
+    const dept = DB.find("departments", a.department_id);
+    return `<tr>
+      <td>${i+1}</td>
+      <td>${patient ? escapeHtml(patient.full_name) : "—"}</td>
+      <td>${dept ? dept.name : "—"}</td>
+      <td>${doctor ? "Dr. " + escapeHtml(doctor.full_name) : "—"}</td>
+      <td>${fmtDateTime(a.checked_in_at)}</td>
+      <td><button class="btn btn-sm btn-primary" onclick="completeVisit('${a.id}')">Mark completed</button></td>
+    </tr>`;
+  }).join("");
+}
+function completeVisit(id) {
+  DB.update("appointments", id, { status: "completed" });
+  renderAppointments(); renderQueue();
+}
+
+document.getElementById("apptDateFilter").addEventListener("change", renderAppointments);
+
+/* ---------------- patient profile ---------------- */
+function openProfile(patientId) {
+  const p = DB.find("patients", patientId);
+  if (!p) return;
+  const records = DB.query("medical_records", r => r.patient_id === patientId);
+  const prescriptions = DB.query("prescriptions", r => r.patient_id === patientId);
+  const labResults = DB.query("laboratory_results", r => {
+    const test = DB.find("laboratory_tests", r.test_id);
+    return test && test.patient_id === patientId;
+  });
+  const payments = DB.query("payments", r => r.patient_id === patientId);
+
+  document.getElementById("profileModalBody").innerHTML = `
+    <div class="modal-head">
+      <div>
+        <h3>${escapeHtml(p.full_name)}</h3>
+        <span class="text-dim small">${p.id} &middot; ${p.gender} &middot; DOB ${fmtDate(p.dob)} &middot; ${escapeHtml(p.phone)}</span>
+      </div>
+      <button class="modal-close" onclick="closeModal('profileModal')">&times;</button>
+    </div>
+    <div class="tabs">
+      <div class="tab active" data-ptab="hist">Medical history</div>
+      <div class="tab" data-ptab="presc">Prescriptions</div>
+      <div class="tab" data-ptab="lab">Lab results</div>
+      <div class="tab" data-ptab="pay">Payments</div>
+    </div>
+    <div class="tab-panel active" id="hist">
+      ${records.length ? records.map(r => `
+        <div class="card mt-14">
+          <div class="flex-between"><b>${fmtDateTime(r.created_at)}</b><span class="badge badge-info">Dr. ${escapeHtml(DB.find("doctors", r.doctor_id)?.full_name || "—")}</span></div>
+          <p class="mt-8"><b>Symptoms:</b> ${escapeHtml(r.symptoms||"—")}</p>
+          <p class="mt-8"><b>Diagnosis:</b> ${escapeHtml(r.diagnosis||"—")}</p>
+          <p class="mt-8"><b>Notes:</b> ${escapeHtml(r.notes||"—")}</p>
+        </div>`).join("") : `<div class="empty-state"><div class="glyph">&#128220;</div>No medical history recorded yet.</div>`}
+    </div>
+    <div class="tab-panel" id="presc">
+      ${prescriptions.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Medicine</th><th>Dosage</th><th>Duration</th><th>Doctor</th></tr></thead><tbody>
+        ${prescriptions.map(pr => `<tr><td>${fmtDate(pr.created_at)}</td><td>${escapeHtml(pr.medicine_name)}</td><td>${escapeHtml(pr.dosage)}</td><td>${escapeHtml(pr.duration)}</td><td>Dr. ${escapeHtml(DB.find("doctors", pr.doctor_id)?.full_name||"—")}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty-state"><div class="glyph">&#128138;</div>No prescriptions yet.</div>`}
+    </div>
+    <div class="tab-panel" id="lab">
+      ${labResults.length ? labResults.map(r => {
+        const test = DB.find("laboratory_tests", r.test_id);
+        return `<div class="card mt-14"><div class="flex-between"><b>${test?.test_type || "Test"}</b><span class="text-dim small">${fmtDate(r.created_at)}</span></div><p class="mt-8">${escapeHtml(r.result_summary||"—")}</p></div>`;
+      }).join("") : `<div class="empty-state"><div class="glyph">&#129514;</div>No laboratory results yet.</div>`}
+    </div>
+    <div class="tab-panel" id="pay">
+      ${payments.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th></tr></thead><tbody>
+        ${payments.map(pay => `<tr><td>${fmtDate(pay.created_at)}</td><td>${fmtMoney(pay.amount)}</td><td>${pay.method}</td><td>${pay.id}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty-state"><div class="glyph">&#128179;</div>No payments recorded yet.</div>`}
+    </div>
+  `;
+  document.querySelectorAll("[data-ptab]").forEach(t => t.onclick = () => {
+    document.querySelectorAll("[data-ptab]").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll("#profileModalBody .tab-panel").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    document.getElementById(t.dataset.ptab).classList.add("active");
+  });
+  openModal("profileModal");
+}
+
+/* ---------------- init + deep-link actions ---------------- */
+renderPatients();
+renderAppointments();
+renderQueue();
+
+const params = new URLSearchParams(location.search);
+if (params.get("action") === "register") document.getElementById("openRegisterBtn").click();
+if (params.get("action") === "appointment") document.getElementById("openApptBtn").click();
+</script>
+</body>
+</html>

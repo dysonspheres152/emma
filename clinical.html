@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Doctor Consultation — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/notifications.js"></script>
+<script src="js/shell.js"></script>
+
+<script>
+const { user, contentEl } = renderShell({
+  activePage: "clinical",
+  title: "Doctor Consultation",
+  subtitle: "Review history and record diagnosis, prescriptions and lab requests."
+});
+
+contentEl.innerHTML = `
+  <div class="panel">
+    <label>Select patient</label>
+    <select id="patientSelect" style="max-width:420px;"></select>
+  </div>
+
+  <div id="consultArea" style="display:none;">
+    <div class="grid grid-2 mt-20" style="align-items:start;">
+      <div class="panel">
+        <div class="panel-head"><h3>Patient history</h3></div>
+        <div id="historyList"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>New consultation note</h3></div>
+        <form id="consultForm">
+          <div class="field"><label>Symptoms</label><textarea id="c_symptoms" rows="2"></textarea></div>
+          <div class="field"><label>Diagnosis</label><textarea id="c_diagnosis" rows="2"></textarea></div>
+          <div class="field"><label>Doctor's notes</label><textarea id="c_notes" rows="2"></textarea></div>
+          <div class="field"><label>Attach document (optional, small files only)</label><input type="file" id="c_file"></div>
+          <button type="submit" class="btn btn-primary btn-block">Save consultation note</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="grid grid-2 mt-20" style="align-items:start;">
+      <div class="panel">
+        <div class="panel-head"><h3>Write prescription</h3></div>
+        <form id="prescribeForm">
+          <div class="field"><label>Medicine</label>
+            <select id="rx_medicine" required></select>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Dosage</label><input type="text" id="rx_dosage" placeholder="e.g. 500mg twice daily" required></div>
+            <div class="field"><label>Duration</label><input type="text" id="rx_duration" placeholder="e.g. 5 days" required></div>
+          </div>
+          <div class="field"><label>Instructions</label><textarea id="rx_instructions" rows="2"></textarea></div>
+          <button type="submit" class="btn btn-primary btn-block">Add prescription</button>
+        </form>
+        <div id="rxList" class="mt-14"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Request laboratory test</h3></div>
+        <form id="labForm">
+          <div class="field"><label>Test type</label><input type="text" id="lab_type" placeholder="e.g. Full blood count, Malaria test" required></div>
+          <div class="field"><label>Notes for laboratory</label><textarea id="lab_notes" rows="2"></textarea></div>
+          <button type="submit" class="btn btn-primary btn-block">Send request to laboratory</button>
+        </form>
+        <div id="labReqList" class="mt-14"></div>
+      </div>
+    </div>
+  </div>
+`;
+
+function populatePatientSelect() {
+  const sel = document.getElementById("patientSelect");
+  const patients = DB.all("patients");
+  sel.innerHTML = `<option value="">Select a patient...</option>` + patients.map(p => `<option value="${p.id}">${escapeHtml(p.full_name)} (${p.id})</option>`).join("");
+}
+function populateMedicineSelect() {
+  const sel = document.getElementById("rx_medicine");
+  const meds = DB.all("medicines");
+  sel.innerHTML = meds.length
+    ? meds.map(m => `<option value="${m.id}">${escapeHtml(m.name)} — ${escapeHtml(m.category||"")}</option>`).join("")
+    : `<option value="">No medicines in inventory yet</option>`;
+}
+
+let currentDoctor = null;
+function resolveDoctor() {
+  // Match logged-in user to a doctors record by full name; if none, create a lightweight linked record.
+  let doc = DB.all("doctors").find(d => d.user_id === user.id);
+  if (!doc && user.role === "Doctor") {
+    doc = DB.insert("doctors", { id: DB.nextId("doctors","DOC"), user_id: user.id, full_name: user.full_name, specialty: "General", created_at: new Date().toISOString() });
+  }
+  return doc;
+}
+
+function renderHistory(patientId) {
+  const records = DB.query("medical_records", r => r.patient_id === patientId).sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+  const el = document.getElementById("historyList");
+  el.innerHTML = records.length ? records.map(r => `
+    <div class="card mt-8">
+      <div class="flex-between"><b>${fmtDateTime(r.created_at)}</b><span class="text-dim small">Dr. ${escapeHtml(DB.find("doctors", r.doctor_id)?.full_name || "—")}</span></div>
+      <p class="mt-8"><b>Symptoms:</b> ${escapeHtml(r.symptoms||"—")}</p>
+      <p class="mt-8"><b>Diagnosis:</b> ${escapeHtml(r.diagnosis||"—")}</p>
+      <p class="mt-8"><b>Notes:</b> ${escapeHtml(r.notes||"—")}</p>
+      ${r.document_name ? `<p class="mt-8 small text-dim">&#128206; ${escapeHtml(r.document_name)}</p>` : ""}
+    </div>
+  `).join("") : `<div class="empty-state"><div class="glyph">&#128220;</div>No history recorded yet for this patient.</div>`;
+}
+
+function renderRx(patientId) {
+  const list = DB.query("prescriptions", r => r.patient_id === patientId).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  document.getElementById("rxList").innerHTML = list.length ? `<div class="table-wrap"><table><thead><tr><th>Medicine</th><th>Dosage</th><th>Duration</th><th>Date</th></tr></thead><tbody>
+    ${list.map(r => `<tr><td>${escapeHtml(r.medicine_name)}</td><td>${escapeHtml(r.dosage)}</td><td>${escapeHtml(r.duration)}</td><td>${fmtDate(r.created_at)}</td></tr>`).join("")}
+  </tbody></table></div>` : `<p class="text-dim small">No prescriptions written yet for this patient.</p>`;
+}
+
+function renderLabRequests(patientId) {
+  const list = DB.query("laboratory_tests", r => r.patient_id === patientId).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  document.getElementById("labReqList").innerHTML = list.length ? list.map(t => `
+    <div class="flex-between card mt-8">
+      <div><b>${escapeHtml(t.test_type)}</b><div class="text-dim small">${fmtDate(t.created_at)}</div></div>
+      <span class="badge ${t.status==='completed'?'badge-good':t.status==='in-progress'?'badge-warn':'badge-info'}">${t.status}</span>
+    </div>
+  `).join("") : `<p class="text-dim small">No laboratory requests yet for this patient.</p>`;
+}
+
+let selectedPatientId = null;
+
+document.getElementById("patientSelect").addEventListener("change", (e) => {
+  selectedPatientId = e.target.value;
+  document.getElementById("consultArea").style.display = selectedPatientId ? "block" : "none";
+  if (!selectedPatientId) return;
+  renderHistory(selectedPatientId);
+  renderRx(selectedPatientId);
+  renderLabRequests(selectedPatientId);
+});
+
+document.getElementById("consultForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!selectedPatientId) return;
+  const doc = resolveDoctor();
+  const fileInput = document.getElementById("c_file");
+  const finish = (docName, docData) => {
+    const record = {
+      id: DB.nextId("medical_records", "MR"),
+      patient_id: selectedPatientId,
+      doctor_id: doc ? doc.id : null,
+      symptoms: document.getElementById("c_symptoms").value.trim(),
+      diagnosis: document.getElementById("c_diagnosis").value.trim(),
+      notes: document.getElementById("c_notes").value.trim(),
+      document_name: docName || null,
+      document_data: docData || null,
+      created_at: new Date().toISOString()
+    };
+    DB.insert("medical_records", record);
+    DB.log("consultation_recorded", `Consultation recorded for patient ${selectedPatientId}`, user.id);
+    e.target.reset();
+    renderHistory(selectedPatientId);
+  };
+  if (fileInput.files[0] && fileInput.files[0].size < 400000) {
+    const reader = new FileReader();
+    reader.onload = () => finish(fileInput.files[0].name, reader.result);
+    reader.readAsDataURL(fileInput.files[0]);
+  } else if (fileInput.files[0]) {
+    alert("File too large for local storage (max ~400KB). Note saved without the attachment.");
+    finish(null, null);
+  } else {
+    finish(null, null);
+  }
+});
+
+document.getElementById("prescribeForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!selectedPatientId) return;
+  const doc = resolveDoctor();
+  const medSel = document.getElementById("rx_medicine");
+  const medicine = DB.find("medicines", medSel.value);
+  if (!medicine) { alert("Please add medicines in the Pharmacy page first."); return; }
+  const record = {
+    id: DB.nextId("prescriptions", "RX"),
+    patient_id: selectedPatientId,
+    doctor_id: doc ? doc.id : null,
+    medicine_id: medicine.id,
+    medicine_name: medicine.name,
+    dosage: document.getElementById("rx_dosage").value.trim(),
+    duration: document.getElementById("rx_duration").value.trim(),
+    instructions: document.getElementById("rx_instructions").value.trim(),
+    status: "pending",
+    created_at: new Date().toISOString()
+  };
+  DB.insert("prescriptions", record);
+  Notify.send({ title: "New prescription", message: `Dr. ${doc?doc.full_name:user.full_name} prescribed ${medicine.name} for a patient.`, target_role: "Pharmacist", type: "info" });
+  e.target.reset();
+  populateMedicineSelect();
+  renderRx(selectedPatientId);
+});
+
+document.getElementById("labForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!selectedPatientId) return;
+  const doc = resolveDoctor();
+  const record = {
+    id: DB.nextId("laboratory_tests", "LAB"),
+    patient_id: selectedPatientId,
+    doctor_id: doc ? doc.id : null,
+    test_type: document.getElementById("lab_type").value.trim(),
+    notes: document.getElementById("lab_notes").value.trim(),
+    status: "requested",
+    created_at: new Date().toISOString()
+  };
+  DB.insert("laboratory_tests", record);
+  Notify.send({ title: "New laboratory request", message: `${record.test_type} requested for a patient by Dr. ${doc?doc.full_name:user.full_name}.`, target_role: "Laboratory", type: "info" });
+  e.target.reset();
+  renderLabRequests(selectedPatientId);
+});
+
+populatePatientSelect();
+populateMedicineSelect();
+</script>
+</body>
+</html>

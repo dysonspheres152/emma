@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reports, Users & Settings — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/notifications.js"></script>
+<script src="js/shell.js"></script>
+
+<script>
+const { user, contentEl } = renderShell({
+  activePage: "admin",
+  title: "Reports, Users & Settings",
+  subtitle: "Administration center for Emmanuel Medical Center."
+});
+
+const isAdmin = Auth.isAdmin(user);
+
+contentEl.innerHTML = `
+  <div class="tabs">
+    <div class="tab active" data-tab="repTab">Reports</div>
+    <div class="tab" data-tab="usrTab">Users & Roles</div>
+    <div class="tab" data-tab="notifTab">Send Notification</div>
+    <div class="tab" data-tab="setTab">Settings</div>
+    <div class="tab" data-tab="secTab">Security Logs</div>
+  </div>
+
+  <div class="tab-panel active" id="repTab">
+    <div class="grid grid-4">
+      <div class="card"><div class="card-title">Today's sales</div><div class="stat-value" id="rDaySales">0</div></div>
+      <div class="card"><div class="card-title">This month's income</div><div class="stat-value" id="rMonthIncome">0</div></div>
+      <div class="card"><div class="card-title">Total patients</div><div class="stat-value" id="rPatients">0</div></div>
+      <div class="card"><div class="card-title">Medicines below reorder level</div><div class="stat-value" id="rLowStock">0</div></div>
+    </div>
+    <div class="grid grid-2 mt-20">
+      <div class="panel">
+        <div class="panel-head"><h3>Daily sales (last 14 days)</h3></div>
+        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Sales</th><th>Revenue</th></tr></thead><tbody id="dailySalesBody"></tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Pharmacy report — top medicines sold</h3></div>
+        <div class="table-wrap"><table><thead><tr><th>Medicine</th><th>Units sold</th><th>Revenue</th></tr></thead><tbody id="pharmaReportBody"></tbody></table></div>
+      </div>
+    </div>
+    <div class="panel mt-20">
+      <div class="panel-head"><h3>Patient report — recent registrations</h3></div>
+      <div class="table-wrap"><table><thead><tr><th>Patient</th><th>Gender</th><th>Phone</th><th>Registered</th></tr></thead><tbody id="patientReportBody"></tbody></table></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="usrTab">
+    ${isAdmin ? `
+      <div class="panel">
+        <div class="panel-head"><h3>Staff accounts</h3><button class="btn btn-primary" id="addUserBtn">&#10133; Create staff account</button></div>
+        <div class="table-wrap"><table><thead><tr><th>Username</th><th>Full name</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead><tbody id="usersBody"></tbody></table></div>
+      </div>
+      <div class="panel mt-20">
+        <div class="panel-head"><h3>Roles & permissions</h3></div>
+        <div class="table-wrap"><table><thead><tr><th>Role</th><th>Permissions</th><th></th></tr></thead><tbody id="rolesBody"></tbody></table></div>
+      </div>
+    ` : `<div class="empty-state"><div class="glyph">&#128274;</div>Only Administrators can manage staff accounts and roles.</div>`}
+  </div>
+
+  <div class="tab-panel" id="notifTab">
+    ${isAdmin ? `
+    <div class="panel" style="max-width:560px;">
+      <div class="panel-head"><h3>Broadcast a message</h3></div>
+      <p class="text-dim small" style="margin-bottom:14px;">
+        This sends instantly to every open tab/window on this device, and is stored so any
+        registered user sees it the next time they open the system on their own device.
+      </p>
+      <div class="field"><label>Send to</label>
+        <select id="bc_target">
+          <option value="all">All registered users</option>
+          <option value="Doctor">Doctors only</option>
+          <option value="Nurse">Nurses only</option>
+          <option value="Receptionist">Receptionists only</option>
+          <option value="Pharmacist">Pharmacists only</option>
+          <option value="Accountant">Accountants only</option>
+          <option value="Laboratory">Laboratory staff only</option>
+        </select>
+      </div>
+      <div class="field"><label>Title</label><input type="text" id="bc_title" required></div>
+      <div class="field"><label>Message</label><textarea id="bc_message" rows="3" required></textarea></div>
+      <button class="btn btn-primary btn-block" id="bc_send">Send notification</button>
+    </div>
+    ` : `<div class="empty-state"><div class="glyph">&#128274;</div>Only Administrators can broadcast messages.</div>`}
+    <div class="panel mt-20">
+      <div class="panel-head"><h3>All notifications</h3></div>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Title</th><th>Message</th><th>Audience</th></tr></thead><tbody id="allNotifBody"></tbody></table></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="setTab">
+    ${isAdmin ? `
+    <div class="panel" style="max-width:640px;">
+      <div class="panel-head"><h3>Hospital details</h3></div>
+      <div class="field"><label>Hospital name</label><input type="text" id="s_name"></div>
+      <div class="field"><label>Location</label><input type="text" id="s_location"></div>
+      <div class="field-row">
+        <div class="field"><label>Phone</label><input type="text" id="s_phone"></div>
+        <div class="field"><label>Email</label><input type="email" id="s_email"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Currency</label><input type="text" id="s_currency"></div>
+        <div class="field"><label>Total beds</label><input type="number" id="s_beds" min="0"></div>
+      </div>
+      <div class="field"><label>Hospital logo</label><input type="file" id="s_logo" accept="image/*"></div>
+      <div id="logoPreview" class="mt-8"></div>
+      <div class="field mt-14"><label>Receipt footer text</label><textarea id="s_receiptFooter" rows="2"></textarea></div>
+      <button class="btn btn-primary btn-block" id="saveSettingsBtn">Save settings</button>
+    </div>
+    <div class="panel mt-20" style="max-width:640px;">
+      <div class="panel-head"><h3>Backup & restore</h3></div>
+      <p class="text-dim small">Every record in this system lives in this browser's local storage. Export a backup regularly and store it safely.</p>
+      <div class="flex gap-10 mt-14">
+        <button class="btn btn-outline" id="exportBtn">&#11015; Export backup (.json)</button>
+        <label class="btn btn-outline" style="margin:0;">&#11014; Import backup<input type="file" id="importFile" accept=".json" style="display:none;"></label>
+      </div>
+    </div>
+    ` : `<div class="empty-state"><div class="glyph">&#128274;</div>Only Administrators can change hospital settings.</div>`}
+  </div>
+
+  <div class="tab-panel" id="secTab">
+    <div class="panel">
+      <div class="panel-head"><h3>Security & activity logs</h3></div>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody id="logsBody"></tbody></table></div>
+    </div>
+  </div>
+`;
+
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  document.getElementById(t.dataset.tab).classList.add("active");
+});
+
+/* ================= REPORTS ================= */
+function renderReports() {
+  const today = new Date().toDateString();
+  const sales = DB.all("sales");
+  const payments = DB.all("payments");
+  const patients = DB.all("patients");
+  const inventory = DB.all("inventory");
+  const medicines = DB.all("medicines");
+
+  const todaySales = sales.filter(s => new Date(s.created_at).toDateString() === today);
+  document.getElementById("rDaySales").textContent = fmtMoney(todaySales.reduce((s,x)=>s+Number(x.total||0),0));
+
+  const now = new Date();
+  const monthIncome = payments.filter(p => { const d = new Date(p.created_at); return d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear(); })
+    .reduce((s,p)=>s+Number(p.amount||0),0);
+  document.getElementById("rMonthIncome").textContent = fmtMoney(monthIncome);
+  document.getElementById("rPatients").textContent = patients.length;
+  document.getElementById("rLowStock").textContent = inventory.filter(i => Number(i.quantity) <= Number(i.reorder_level||10)).length;
+
+  // daily sales last 14 days
+  const days = [];
+  for (let i=13;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); days.push(d); }
+  document.getElementById("dailySalesBody").innerHTML = days.map(d => {
+    const dayStr = d.toDateString();
+    const daySales = sales.filter(s => new Date(s.created_at).toDateString()===dayStr);
+    const revenue = daySales.reduce((s,x)=>s+Number(x.total||0),0);
+    return `<tr><td>${fmtDate(d.toISOString())}</td><td>${daySales.length}</td><td>${fmtMoney(revenue)}</td></tr>`;
+  }).join("");
+
+  // pharmacy report
+  const items = DB.all("sale_items");
+  const byMed = {};
+  items.forEach(i => {
+    if (!byMed[i.medicine_id]) byMed[i.medicine_id] = { name: i.medicine_name, qty: 0, revenue: 0 };
+    byMed[i.medicine_id].qty += Number(i.quantity);
+    byMed[i.medicine_id].revenue += Number(i.line_total);
+  });
+  const topMeds = Object.values(byMed).sort((a,b)=>b.revenue-a.revenue).slice(0,10);
+  document.getElementById("pharmaReportBody").innerHTML = topMeds.length ? topMeds.map(m => `<tr><td>${escapeHtml(m.name)}</td><td>${m.qty}</td><td>${fmtMoney(m.revenue)}</td></tr>`).join("")
+    : `<tr class="empty-row"><td colspan="3">No sales recorded yet.</td></tr>`;
+
+  // patient report
+  const recent = [...patients].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,10);
+  document.getElementById("patientReportBody").innerHTML = recent.length ? recent.map(p => `<tr><td>${escapeHtml(p.full_name)}</td><td>${p.gender}</td><td>${escapeHtml(p.phone)}</td><td>${fmtDate(p.created_at)}</td></tr>`).join("")
+    : `<tr class="empty-row"><td colspan="4">No patients registered yet.</td></tr>`;
+}
+renderReports();
+
+/* ================= USERS & ROLES ================= */
+if (isAdmin) {
+  document.body.insertAdjacentHTML("beforeend", `
+  <div class="modal-backdrop" id="userModal">
+    <div class="modal">
+      <div class="modal-head"><h3>Create staff account</h3><button class="modal-close" onclick="closeModal('userModal')">&times;</button></div>
+      <form id="userForm">
+        <div class="field"><label>Full name *</label><input type="text" id="u_name" required></div>
+        <div class="field-row">
+          <div class="field"><label>Username *</label><input type="text" id="u_username" required></div>
+          <div class="field"><label>Temporary password *</label><input type="text" id="u_password" required></div>
+        </div>
+        <div class="field"><label>Role *</label>
+          <select id="u_role" required>
+            <option value="">Select</option>
+            <option>Administrator</option><option>Doctor</option><option>Nurse</option>
+            <option>Receptionist</option><option>Pharmacist</option><option>Accountant</option><option>Laboratory</option>
+          </select>
+        </div>
+        <div class="field" id="specialtyField" style="display:none;"><label>Specialty (for doctors)</label><input type="text" id="u_specialty"></div>
+        <button type="submit" class="btn btn-primary btn-block">Create account</button>
+      </form>
+    </div>
+  </div>`);
+
+  document.getElementById("u_role").addEventListener("change", (e) => {
+    document.getElementById("specialtyField").style.display = e.target.value === "Doctor" ? "block" : "none";
+  });
+
+  document.getElementById("addUserBtn").onclick = () => { document.getElementById("userForm").reset(); document.getElementById("specialtyField").style.display="none"; openModal("userModal"); };
+
+  document.getElementById("userForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const username = document.getElementById("u_username").value.trim();
+    if (DB.all("users").some(u => u.username.toLowerCase() === username.toLowerCase())) { alert("Username already exists."); return; }
+    const role = document.getElementById("u_role").value;
+    const fullName = document.getElementById("u_name").value.trim();
+    const newUser = DB.insert("users", {
+      id: DB.nextId("users","USR"), username, password: document.getElementById("u_password").value,
+      full_name: fullName, role, must_change_password: true, status: "active", created_at: new Date().toISOString()
+    });
+    DB.insert("staff", { id: DB.nextId("staff","STF"), user_id: newUser.id, full_name: fullName, role, created_at: new Date().toISOString() });
+    if (role === "Doctor") {
+      DB.insert("doctors", { id: DB.nextId("doctors","DOC"), user_id: newUser.id, full_name: fullName, specialty: document.getElementById("u_specialty").value.trim() || "General", created_at: new Date().toISOString() });
+    }
+    DB.log("user_created", `Staff account created for ${fullName} (${role})`, user.id);
+    Notify.send({ title: "Welcome to the system", message: `An account was created for you as ${role}. Sign in with username "${username}".`, target_user: newUser.id, type: "info" });
+    e.target.reset();
+    closeModal("userModal");
+    renderUsers();
+  });
+
+  function renderUsers() {
+    const users = DB.all("users").sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+    document.getElementById("usersBody").innerHTML = users.map(u => `
+      <tr>
+        <td>${escapeHtml(u.username)}</td>
+        <td>${escapeHtml(u.full_name)}</td>
+        <td><span class="badge badge-info">${u.role}</span></td>
+        <td><span class="badge ${u.status==='active'?'badge-good':'badge-danger'}">${u.status}</span></td>
+        <td>${u.last_login ? fmtDateTime(u.last_login) : "Never"}</td>
+        <td class="flex gap-8">
+          ${u.id !== user.id ? `<button class="btn btn-sm btn-outline" onclick="toggleUserStatus('${u.id}')">${u.status==='active'?'Disable':'Enable'}</button>` : `<span class="text-dim small">You</span>`}
+        </td>
+      </tr>`).join("");
+  }
+  window.toggleUserStatus = function(id) {
+    const u = DB.find("users", id);
+    const newStatus = u.status === "active" ? "disabled" : "active";
+    DB.update("users", id, { status: newStatus });
+    DB.log("user_status_changed", `${u.username} set to ${newStatus}`, user.id);
+    renderUsers();
+  };
+
+  function renderRoles() {
+    const allPerms = ["manage_patients","manage_appointments","manage_pharmacy","manage_inventory","manage_billing","manage_lab","manage_users","view_reports"];
+    document.getElementById("rolesBody").innerHTML = DB.all("roles").map(r => `
+      <tr>
+        <td><b>${r.name}</b></td>
+        <td>
+          ${r.permissions.includes("*") ? `<span class="badge badge-lemon">All permissions</span>` :
+            allPerms.map(p => `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11.5px;">
+              <input type="checkbox" data-role="${r.id}" data-perm="${p}" ${r.permissions.includes(p)?"checked":""} style="width:auto;"> ${p.replace('manage_','').replace('_',' ')}
+            </label>`).join("")}
+        </td>
+        <td></td>
+      </tr>`).join("");
+    document.querySelectorAll("[data-perm]").forEach(cb => cb.onchange = () => {
+      const role = DB.find("roles", cb.dataset.role);
+      let perms = new Set(role.permissions);
+      if (cb.checked) perms.add(cb.dataset.perm); else perms.delete(cb.dataset.perm);
+      DB.update("roles", role.id, { permissions: [...perms] });
+      DB.log("role_permissions_changed", `${role.name} permissions updated`, user.id);
+    });
+  }
+  renderUsers();
+  renderRoles();
+}
+
+/* ================= NOTIFICATIONS ================= */
+if (isAdmin) {
+  document.getElementById("bc_send").onclick = () => {
+    const title = document.getElementById("bc_title").value.trim();
+    const message = document.getElementById("bc_message").value.trim();
+    const target = document.getElementById("bc_target").value;
+    if (!title || !message) { alert("Enter a title and message."); return; }
+    Notify.send({ title, message, target_role: target, type: "info" });
+    document.getElementById("bc_title").value = ""; document.getElementById("bc_message").value = "";
+    Notify.toast("Notification sent", "Delivered to open sessions and saved for all recipients.", "info");
+    renderAllNotifs();
+  };
+}
+function renderAllNotifs() {
+  const list = DB.all("notifications").sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  document.getElementById("allNotifBody").innerHTML = list.length ? list.map(n => `
+    <tr><td>${fmtDateTime(n.created_at)}</td><td>${escapeHtml(n.title)}</td><td>${escapeHtml(n.message)}</td><td>${n.target_user ? "1 user" : n.target_role}</td></tr>
+  `).join("") : `<tr class="empty-row"><td colspan="4">No notifications sent yet.</td></tr>`;
+}
+renderAllNotifs();
+
+/* ================= SETTINGS ================= */
+if (isAdmin) {
+  const settings = DB.all("settings")[0] || {};
+  document.getElementById("s_name").value = settings.hospital_name || "";
+  document.getElementById("s_location").value = settings.hospital_location || "";
+  document.getElementById("s_phone").value = settings.hospital_phone || "";
+  document.getElementById("s_email").value = settings.hospital_email || "";
+  document.getElementById("s_currency").value = settings.currency || "UGX";
+  document.getElementById("s_beds").value = settings.total_beds || 0;
+  document.getElementById("s_receiptFooter").value = settings.receipt_footer || "";
+  if (settings.logo) document.getElementById("logoPreview").innerHTML = `<img src="${settings.logo}" style="height:50px;border-radius:8px;">`;
+
+  let pendingLogo = settings.logo || "";
+  document.getElementById("s_logo").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { pendingLogo = reader.result; document.getElementById("logoPreview").innerHTML = `<img src="${pendingLogo}" style="height:50px;border-radius:8px;">`; };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById("saveSettingsBtn").onclick = () => {
+    DB.update("settings", "SETTINGS-1", {
+      hospital_name: document.getElementById("s_name").value.trim(),
+      hospital_location: document.getElementById("s_location").value.trim(),
+      hospital_phone: document.getElementById("s_phone").value.trim(),
+      hospital_email: document.getElementById("s_email").value.trim(),
+      currency: document.getElementById("s_currency").value.trim(),
+      total_beds: Number(document.getElementById("s_beds").value || 0),
+      receipt_footer: document.getElementById("s_receiptFooter").value.trim(),
+      logo: pendingLogo
+    });
+    DB.log("settings_updated", "Hospital settings updated", user.id);
+    Notify.toast("Settings saved", "Hospital details were updated.", "info");
+  };
+
+  document.getElementById("exportBtn").onclick = () => {
+    const backup = {};
+    DB.TABLES.forEach(t => backup[t] = DB.all(t));
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `emc-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    DB.log("backup_exported", "Data backup exported", user.id);
+  };
+
+  document.getElementById("importFile").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!confirm("Importing will replace all current data in this browser. Continue?")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        DB.TABLES.forEach(t => { if (data[t]) DB.save(t, data[t]); });
+        alert("Backup restored. The page will now reload.");
+        location.reload();
+      } catch (err) { alert("Invalid backup file."); }
+    };
+    reader.readAsText(file);
+  });
+}
+
+/* ================= SECURITY LOGS ================= */
+function renderLogs() {
+  const logs = DB.all("audit_logs").sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,200);
+  document.getElementById("logsBody").innerHTML = logs.length ? logs.map(l => {
+    const u = DB.find("users", l.user_id);
+    return `<tr><td>${fmtDateTime(l.created_at)}</td><td>${u ? escapeHtml(u.full_name) : l.user_id}</td><td>${l.action}</td><td>${escapeHtml(l.details||"")}</td></tr>`;
+  }).join("") : `<tr class="empty-row"><td colspan="4">No activity recorded yet.</td></tr>`;
+}
+renderLogs();
+</script>
+</body>
+</html>

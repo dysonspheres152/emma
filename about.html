@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>About — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/notifications.js"></script>
+<script src="js/shell.js"></script>
+
+<script>
+const authed = Auth.currentUser();
+let contentEl;
+if (authed) {
+  ({ contentEl } = renderShell({ activePage: "about", title: "About Emmanuel Medical Center", subtitle: "Our story, our services, and how this system works." }));
+} else {
+  document.body.innerHTML = `<div style="max-width:900px;margin:0 auto;padding:30px;"><a href="index.html" class="btn btn-outline btn-sm">&larr; Back to sign in</a><div id="publicContent"></div></div>`;
+  contentEl = document.getElementById("publicContent");
+}
+
+const settings = DB.all("settings")[0] || {};
+
+contentEl.insertAdjacentHTML("beforeend", `
+  <div class="about-hero mt-20">
+    <div class="flex gap-14" style="align-items:center; position:relative; z-index:1;">
+      ${settings.logo ? `<img src="${settings.logo}" style="height:64px;width:64px;object-fit:cover;border-radius:14px;">` : `<div class="brand-mark" style="width:64px;height:64px;font-size:22px;">EM</div>`}
+      <div>
+        <h2 style="font-size:26px;">${settings.hospital_name || "Emmanuel Medical Center"}</h2>
+        <span class="text-mid">${settings.hospital_location || "Entebbe, Uganda"}</span>
+        <div class="mt-8"><span class="badge badge-lemon">&#9989; Registered health facility</span></div>
+      </div>
+    </div>
+    <p class="mt-20 text-mid" style="max-width:640px; position:relative; z-index:1;">
+      Emmanuel Medical Center is a community hospital in Entebbe, Uganda, providing outpatient,
+      inpatient, laboratory and pharmacy services. This management system brings registration,
+      consultations, pharmacy sales, laboratory results and billing into one place for our staff.
+    </p>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="panel">
+      <div class="panel-head"><h3>Services offered</h3></div>
+      <ul style="margin:0; padding-left:18px; color:var(--text-mid); line-height:2;">
+        <li>General out-patient consultations</li>
+        <li>In-patient admission & ward care</li>
+        <li>Maternity & antenatal care</li>
+        <li>Laboratory testing & diagnostics</li>
+        <li>Pharmacy & medicine dispensing</li>
+        <li>Minor theatre & emergency care</li>
+        <li>Health insurance billing</li>
+        <li>Preventive health & immunization</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Contact</h3></div>
+      <p class="text-mid">&#128205; ${settings.hospital_location || "Entebbe, Uganda"}</p>
+      <p class="text-mid mt-8">&#128222; ${settings.hospital_phone || "+256 700 000 000"}</p>
+      <p class="text-mid mt-8">&#9993; ${settings.hospital_email || "info@emmanuelmedicalcenter.ug"}</p>
+      <div class="divider"></div>
+      <p class="small text-dim">Update these details any time from Reports, Users & Settings &rarr; Settings (Administrator access).</p>
+    </div>
+  </div>
+
+  <div class="panel mt-20">
+    <div class="panel-head"><h3>How this system stores data</h3></div>
+    <p class="text-mid">
+      Every record — patients, appointments, sales, invoices, laboratory results and more — is saved
+      directly in this browser's local storage. Nothing is sent to an external server, so records
+      stay private to the device and browser they were entered on.
+    </p>
+    <p class="text-mid mt-14">
+      <b>About notifications:</b> when someone sends a notification, it is written to local storage
+      immediately, and it appears instantly in every other tab or window open on the <i>same device</i>
+      via the browser's live update channel. A device that opens the app later will see it too, once
+      that device has its own copy of the data. Because this build has no shared server or database,
+      a notification sent on one physical device is not automatically pushed to a completely separate
+      device — true multi-device real-time sync would need a small backend service connecting all
+      devices, which can be added on top of this system if needed.
+    </p>
+  </div>
+`);
+</script>
+</body>
+</html>

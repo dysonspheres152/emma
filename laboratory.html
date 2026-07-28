@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Laboratory — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/notifications.js"></script>
+<script src="js/shell.js"></script>
+
+<script>
+const { user, contentEl } = renderShell({
+  activePage: "laboratory",
+  title: "Laboratory",
+  subtitle: "Track test requests, enter results, and notify the requesting doctor."
+});
+
+contentEl.innerHTML = `
+  <div class="panel">
+    <div class="panel-head">
+      <h3>Test requests</h3>
+      <select id="statusFilter">
+        <option value="">All statuses</option>
+        <option value="requested">Requested</option>
+        <option value="in-progress">In progress</option>
+        <option value="completed">Completed</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Patient</th><th>Test type</th><th>Requested by</th><th>Status</th><th></th></tr></thead>
+        <tbody id="labBody"></tbody>
+      </table>
+    </div>
+  </div>
+`;
+
+document.body.insertAdjacentHTML("beforeend", `
+<div class="modal-backdrop" id="resultModal">
+  <div class="modal modal-lg">
+    <div class="modal-head"><h3>Enter result</h3><button class="modal-close" onclick="closeModal('resultModal')">&times;</button></div>
+    <form id="resultForm">
+      <input type="hidden" id="res_test_id">
+      <div class="field"><label>Result summary</label><textarea id="res_summary" rows="4" required></textarea></div>
+      <div class="field"><label>Attach file (optional, small files only)</label><input type="file" id="res_file"></div>
+      <button type="submit" class="btn btn-primary btn-block">Save & send results to doctor</button>
+    </form>
+  </div>
+</div>
+`);
+
+function renderLab() {
+  const filter = document.getElementById("statusFilter").value;
+  let tests = DB.all("laboratory_tests").sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+  if (filter) tests = tests.filter(t => t.status === filter);
+
+  const body = document.getElementById("labBody");
+  if (tests.length === 0) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="6">No laboratory requests found.</td></tr>`;
+    return;
+  }
+  body.innerHTML = tests.map(t => {
+    const patient = DB.find("patients", t.patient_id);
+    const doctor = DB.find("doctors", t.doctor_id);
+    const statusBadge = { requested: "badge-info", "in-progress": "badge-warn", completed: "badge-good" }[t.status] || "badge-info";
+    return `
+      <tr>
+        <td>${fmtDate(t.created_at)}</td>
+        <td>${patient ? escapeHtml(patient.full_name) : "—"}</td>
+        <td>${escapeHtml(t.test_type)}</td>
+        <td>${doctor ? "Dr. " + escapeHtml(doctor.full_name) : "—"}</td>
+        <td><span class="badge ${statusBadge}">${t.status}</span></td>
+        <td class="flex gap-8">
+          ${t.status === "requested" ? `<button class="btn btn-sm btn-outline" onclick="setInProgress('${t.id}')">Start</button>` : ""}
+          ${t.status !== "completed" ? `<button class="btn btn-sm btn-primary" onclick="openResult('${t.id}')">Enter result</button>` : `<button class="btn btn-sm btn-ghost" onclick="viewResult('${t.id}')">View result</button>`}
+        </td>
+      </tr>`;
+  }).join("");
+}
+
+function setInProgress(id) {
+  DB.update("laboratory_tests", id, { status: "in-progress" });
+  DB.log("lab_in_progress", `Test ${id} marked in progress`, user.id);
+  renderLab();
+}
+
+function openResult(id) {
+  document.getElementById("res_test_id").value = id;
+  document.getElementById("resultForm").reset();
+  document.getElementById("res_test_id").value = id;
+  openModal("resultModal");
+}
+
+function viewResult(id) {
+  const result = DB.all("laboratory_results").find(r => r.test_id === id);
+  if (!result) { alert("No result found."); return; }
+  alert(result.result_summary);
+}
+
+document.getElementById("resultForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const testId = document.getElementById("res_test_id").value;
+  const test = DB.find("laboratory_tests", testId);
+  const fileInput = document.getElementById("res_file");
+
+  const finish = (fileName, fileData) => {
+    DB.insert("laboratory_results", {
+      id: DB.nextId("laboratory_results", "RES"),
+      test_id: testId,
+      result_summary: document.getElementById("res_summary").value.trim(),
+      file_name: fileName || null,
+      file_data: fileData || null,
+      entered_by: user.id,
+      created_at: new Date().toISOString()
+    });
+    DB.update("laboratory_tests", testId, { status: "completed" });
+    DB.log("lab_result_entered", `Result entered for test ${testId}`, user.id);
+    Notify.send({ title: "Laboratory result ready", message: `Results for ${test.test_type} are ready for review.`, target_role: "Doctor", type: "info" });
+    closeModal("resultModal");
+    renderLab();
+  };
+
+  if (fileInput.files[0] && fileInput.files[0].size < 400000) {
+    const reader = new FileReader();
+    reader.onload = () => finish(fileInput.files[0].name, reader.result);
+    reader.readAsDataURL(fileInput.files[0]);
+  } else if (fileInput.files[0]) {
+    alert("File too large for local storage (max ~400KB). Result saved without the attachment.");
+    finish(null, null);
+  } else {
+    finish(null, null);
+  }
+});
+
+document.getElementById("statusFilter").addEventListener("change", renderLab);
+renderLab();
+</script>
+</body>
+</html>
