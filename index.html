@@ -131,13 +131,7 @@
     if (el) el.classList.remove("active");
   }
 
-  // existing login script...
-  (function () {
-    const u = Auth.currentUser();
-    if (u && !u.must_change_password) window.location.href = "dashboard.html";
-  })();
-  ...
-  // if already logged in and password already set, skip straight to dashboard
+  // Redirect to dashboard if user is already logged in
   (function () {
     const u = Auth.currentUser();
     if (u && !u.must_change_password) window.location.href = "dashboard.html";
@@ -151,6 +145,7 @@
     const password = document.getElementById("password").value;
     const result = Auth.login(username, password);
     const errEl = document.getElementById("loginError");
+
     if (!result.ok) {
       errEl.textContent = result.message;
       errEl.style.display = "block";
