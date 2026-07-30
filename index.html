@@ -66,10 +66,6 @@
         <button class="btn btn-ghost btn-sm" id="forgotBtn">Forgot password?</button>
         <a href="about.html" class="small text-dim">About this hospital &rarr;</a>
       </div>
-
-      <div class="divider"></div>
-      <p class="hint">Default administrator account on first run: <b>admin</b> / <b>admin123</b> — you will be asked to set a new password immediately after signing in.</p>
-    </div>
   </div>
 </div>
 
@@ -116,11 +112,10 @@
     <button class="btn btn-primary btn-block" id="pwChangeSubmit">Save & continue</button>
   </div>
 </div>
-
 <script src="db.js"></script>
 <script src="auth.js"></script>
 <script>
-  // Add modal toggle functions
+  // Utility functions for modals
   function openModal(id) {
     const el = document.getElementById(id);
     if (el) el.classList.add("active");
@@ -131,36 +126,17 @@
     if (el) el.classList.remove("active");
   }
 
-// Redirect if already logged in
+  // Redirect to dashboard if user is already logged in and password is set
   (function () {
     const u = Auth.currentUser();
-    if (u && !u.must_change_password) window.location.href = "dashboard.html";
+    if (u && !u.must_change_password) {
+      window.location.href = "dashboard.html";
+    }
   })();
 
   let pendingUser = null;
 
-  document.getElementById("loginForm").addEventListener("submit", (e) => {
-    e.preventDefault(); // Now this will properly prevent the page refresh!
-    const username = document.getElementById("username").value;
-    const password = document.getElementById("password").value;
-    const result = Auth.login(username, password);
-    const errEl = document.getElementById("loginError");
-
-    if (!result.ok) {
-      errEl.textContent = result.message;
-      errEl.style.display = "block";
-      return;
-    }
-    if (result.mustChange) {
-      pendingUser = result.user;
-      openModal("changePwModal");
-    } else {
-      window.location.href = "dashboard.html";
-    }
-  });
-
-  let pendingUser = null;
-
+  // Handle Main Login Form
   document.getElementById("loginForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const username = document.getElementById("username").value;
@@ -173,6 +149,7 @@
       errEl.style.display = "block";
       return;
     }
+
     if (result.mustChange) {
       pendingUser = result.user;
       openModal("changePwModal");
@@ -181,37 +158,75 @@
     }
   });
 
-  document.getElementById("forgotBtn").onclick = () => openModal("forgotModal");
+  // Handle Forgot Password Modal Trigger
+  const forgotBtn = document.getElementById("forgotBtn");
+  if (forgotBtn) {
+    forgotBtn.onclick = () => openModal("forgotModal");
+  }
 
-  document.getElementById("fpSubmit").onclick = () => {
-    const username = document.getElementById("fpUsername").value.trim();
-    const pw = document.getElementById("fpPassword").value;
-    const errEl = document.getElementById("fpError");
-    if (!username || pw.length < 4) {
-      errEl.textContent = "Enter a username and a password of at least 4 characters.";
-      errEl.style.display = "block";
-      return;
-    }
-    const res = Auth.resetPassword(username, pw);
-    if (!res.ok) {
-      errEl.textContent = res.message;
-      errEl.style.display = "block";
-      return;
-    }
-    closeModal("forgotModal");
-    alert("Password reset successful. You can now sign in with your new password.");
-  };
+  // Handle Reset Password Submission
+  const fpSubmit = document.getElementById("fpSubmit");
+  if (fpSubmit) {
+    fpSubmit.onclick = (e) => {
+      e.preventDefault();
+      const username = document.getElementById("fpUsername").value.trim();
+      const pw = document.getElementById("fpPassword").value;
+      const errEl = document.getElementById("fpError");
+      
+      if (!username || pw.length < 4) {
+        errEl.textContent = "Enter a username and a password of at least 4 characters.";
+        errEl.style.display = "block";
+        return;
+      }
+      
+      const res = Auth.resetPassword(username, pw);
+      if (!res.ok) {
+        errEl.textContent = res.message;
+        errEl.style.display = "block";
+        return;
+      }
+      
+      closeModal("forgotModal");
+      alert("Password reset successful. You can now sign in with your new password.");
+    };
+  }
 
-  document.getElementById("pwChangeSubmit").onclick = () => {
-    const p1 = document.getElementById("newPw").value;
-    const p2 = document.getElementById("confirmPw").value;
-    const errEl = document.getElementById("pwChangeError");
-    if (p1.length < 4) { errEl.textContent = "Password must be at least 4 characters."; errEl.style.display = "block"; return; }
-    if (p1 !== p2) { errEl.textContent = "Passwords do not match."; errEl.style.display = "block"; return; }
-    DB.update("users", pendingUser.id, { password: p1, must_change_password: false });
-    DB.log("password_changed", `${pendingUser.username} set a new password`, pendingUser.id);
-    window.location.href = "dashboard.html";
-  };
+  // Handle Mandatory Password Change Submission
+  const pwChangeSubmit = document.getElementById("pwChangeSubmit");
+  if (pwChangeSubmit) {
+    pwChangeSubmit.onclick = (e) => {
+      e.preventDefault();
+      const p1 = document.getElementById("newPw").value;
+      const p2 = document.getElementById("confirmPw").value;
+      const errEl = document.getElementById("pwChangeError");
+
+      if (p1.length < 4) { 
+        errEl.textContent = "Password must be at least 4 characters."; 
+        errEl.style.display = "block"; 
+        return; 
+      }
+      if (p1 !== p2) { 
+        errEl.textContent = "Passwords do not match."; 
+        errEl.style.display = "block"; 
+        return; 
+      }
+
+      // 1. Update database record
+      const updatedUser = DB.update("users", pendingUser.id, { 
+        password: p1, 
+        must_change_password: false 
+      });
+
+      // 2. Update local session storage so dashboard knows you are authorized
+      sessionStorage.setItem("current_user", JSON.stringify(updatedUser));
+
+      // 3. Log event
+      DB.log("password_changed", `${pendingUser.username} set a new password`, pendingUser.id);
+
+      // 4. Redirect to dashboard
+      window.location.href = "dashboard.html";
+    };
+  }
 </script>
 </body>
 </html>
