@@ -118,8 +118,25 @@
 </div>
 
 <script src="db.js"></script>
-<script src="jauth.js"></script>
+<script src="auth.js"></script>
 <script>
+  // Add modal toggle functions
+  function openModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.add("active");
+  }
+
+  function closeModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove("active");
+  }
+
+  // existing login script...
+  (function () {
+    const u = Auth.currentUser();
+    if (u && !u.must_change_password) window.location.href = "dashboard.html";
+  })();
+  ...
   // if already logged in and password already set, skip straight to dashboard
   (function () {
     const u = Auth.currentUser();
