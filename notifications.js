@@ -1,12 +1,4 @@
-/* ============================================================
-   Notifications: broadcasts instantly to every open tab/window
-   on this device (BroadcastChannel + storage event), and is
-   permanently stored in the notifications table so any device
-   that opens the app afterwards also sees it, once it loads
-   local data. See About > Notes on Notifications for the
-   honest explanation of what "online" means in a browser-only,
-   no-backend system.
-   ============================================================ */
+
 
 const Notify = (() => {
   let channel = null;
@@ -82,5 +74,63 @@ const Notify = (() => {
     setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 300); }, 6000);
   }
 
-  return { send, forUser, unreadCount, markRead, markAllRead, renderBadge, initBell, toast };
+  // --- PUBLIC BOOKING & APPOINTMENT SYNC EXTENSIONS --- //
+
+  // Helper to fetch live pending appointments for display on public feeds or widgets
+  function getPublicRequests() {
+    return DB.all("appointments")
+      .filter(a => a.status === "pending")
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  }
+
+  // Listen for broadcast events and update public appointment widgets across tabs
+  function initPublicFeed(containerId) {
+    const render = () => {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      const requests = getPublicRequests();
+      if (requests.length === 0) {
+        el.innerHTML = `<p class="text-dim small">No recent public requests.</p>`;
+        return;
+      }
+      el.innerHTML = requests.slice(0, 5).map(r => `
+        <div class="card mt-8" style="padding:10px; border-left:3px solid var(--primary);">
+          <strong style="font-size:13px;">${r.patient_name} — ${r.request_type}</strong>
+          <div class="text-mid small">${r.department_name || 'General'} | ${r.appointment_date}</div>
+          <span class="badge badge-warning mt-4">${r.status}</span>
+        </div>
+      `).join("");
+    };
+
+    render();
+
+    if (channel) {
+      const originalHandler = channel.onmessage;
+      channel.onmessage = (ev) => {
+        if (typeof originalHandler === "function") originalHandler(ev);
+        if (ev.data && ev.data.type === "new_notification") {
+          render();
+        }
+      };
+    }
+
+    window.addEventListener("storage", (e) => {
+      if (e.key === DB.key("appointments") || e.key === DB.key("notifications")) {
+        render();
+      }
+    });
+  }
+
+  return { 
+    send, 
+    forUser, 
+    unreadCount, 
+    markRead, 
+    markAllRead, 
+    renderBadge, 
+    initBell, 
+    toast,
+    getPublicRequests,
+    initPublicFeed
+  };
 })();
