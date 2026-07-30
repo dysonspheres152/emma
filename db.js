@@ -1,9 +1,3 @@
-/* ============================================================
-   EMMANUEL MEDICAL CENTER — ENTEBBE
-   Local database layer (localStorage-backed)
-   No demo/sample records are seeded — only the structural data
-   required for the system to function on first run.
-   ============================================================ */
 
 const DB = (() => {
   const TABLES = [
@@ -126,7 +120,7 @@ const DB = (() => {
       insert("users", {
         id: nextId("users", "USR"),
         username: "admin",
-        password: "admin123", // must be changed on first login
+        password: "admin123", 
         full_name: "System Administrator",
         role_id: adminRole.id,
         role: "Administrator",
