@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Book Appointment & Request Services — Emmanuel Medical Center</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="login-wrap">
+  <div class="login-hero">
+    <div style="position:relative; z-index:1;">
+      <div class="flex gap-10" style="align-items:center;">
+        <div class="brand-mark" style="width:46px;height:46px;font-size:16px;">EM</div>
+        <div>
+          <b style="font-family:var(--font-display); font-size:18px; display:block;">Emmanuel Medical Center</b>
+          <span style="color:var(--text-mid); font-size:13px;">Entebbe, Uganda</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="position:relative; z-index:1;">
+      <h2 style="font-size:34px; max-width:480px; line-height:1.2;">Public Care & Online Request Portal</h2>
+      <p class="text-mid" style="max-width:440px; margin-top:12px; font-size:14.5px;">
+        Book appointments with our medical specialists, order pharmacy supplies, or request laboratory tests online anytime.
+      </p>
+    </div>
+
+    <div style="position:relative; z-index:1;">
+      <a href="index.html" class="btn btn-outline btn-sm" style="color: white; border-color: rgba(255,255,255,0.3);">&larr; Staff Sign In</a>
+    </div>
+  </div>
+
+  <div class="login-card">
+    <h1 style="font-size:24px; font-family:var(--font-display); font-weight:700;">Public Request Portal</h1>
+    <p class="text-mid" style="margin-top:4px; font-size:14px;">Fill out the form below to submit an appointment or request.</p>
+
+    <div id="bookingSuccess" class="alert alert-success mt-14" style="display:none; background:#EDFCF2; color:#15803D; padding:12px; border-radius:6px; font-size:13.5px; border:1px solid #BBF7D0;">
+      <strong>Request Submitted Successfully!</strong><br>
+      Our staff has received your request and a live notification has been sent.
+    </div>
+
+    <form id="publicBookingForm" class="mt-20">
+      <div class="form-group">
+        <label class="form-label" for="applicantName">Full Name</label>
+        <input type="text" id="applicantName" class="form-control" placeholder="e.g. John Doe" required>
+      </div>
+
+      <div class="form-group mt-14">
+        <label class="form-label" for="applicantPhone">Phone Number</label>
+        <input type="tel" id="applicantPhone" class="form-control" placeholder="+256 700 000 000" required>
+      </div>
+
+      <div class="form-row mt-14" style="display:flex; gap:12px;">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label" for="requestType">Request Type</label>
+          <select id="requestType" class="form-control" required>
+            <option value="Appointment">Medical Appointment</option>
+            <option value="Pharmacy Order">Pharmacy Order</option>
+            <option value="Lab Test">Laboratory Test Request</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="flex:1;">
+          <label class="form-label" for="department">Department</label>
+          <select id="department" class="form-control" required>
+            <option value="Out-Patient">Out-Patient</option>
+            <option value="In-Patient">In-Patient</option>
+            <option value="Pharmacy">Pharmacy</option>
+            <option value="Laboratory">Laboratory</option>
+            <option value="Maternity">Maternity</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group mt-14">
+        <label class="form-label" for="preferredDate">Preferred Date</label>
+        <input type="date" id="preferredDate" class="form-control" required>
+      </div>
+
+      <div class="form-group mt-14">
+        <label class="form-label" for="notes">Additional Details / Notes</label>
+        <textarea id="notes" class="form-control" rows="3" placeholder="Describe symptoms, medicine requested, or specific details..."></textarea>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block mt-20" style="width:100%; padding:12px;">Submit Request</button>
+    </form>
+  </div>
+</div>
+
+<script src="db.js"></script>
+<script src="notifications.js"></script>
+<script>
+  // Set default minimum date to today
+  document.getElementById("preferredDate").min = new Date().toISOString().split("T")[0];
+
+  document.getElementById("publicBookingForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+
+    const name = document.getElementById("applicantName").value.trim();
+    const phone = document.getElementById("applicantPhone").value.trim();
+    const type = document.getElementById("requestType").value;
+    const deptName = document.getElementById("department").value;
+    const date = document.getElementById("preferredDate").value;
+    const notes = document.getElementById("notes").value.trim();
+
+    // 1. Find or create matching department
+    const depts = DB.all("departments");
+    let dept = depts.find(d => d.name.toLowerCase() === deptName.toLowerCase());
+    const deptId = dept ? dept.id : "DEP-00001";
+
+    // 2. Insert into appointments table
+    const apptRecord = {
+      id: DB.nextId("appointments", "APT"),
+      patient_name: name,
+      phone: phone,
+      request_type: type,
+      department_id: deptId,
+      department_name: deptName,
+      appointment_date: date,
+      notes: notes,
+      status: "pending",
+      created_at: new Date().toISOString()
+    };
+    DB.insert("appointments", apptRecord);
+
+    // 3. Broadcast notification to all open tabs/pages
+    Notify.send({
+      title: `New Public ${type}`,
+      message: `${name} (${phone}) submitted a request for ${deptName} on ${date}.`,
+      target_role: "all",
+      type: "info"
+    });
+
+    // 4. Log audit entry
+    DB.log("public_request", `Public booking created by ${name} (${type})`, "public");
+
+    // 5. Show success message & reset form
+    document.getElementById("bookingSuccess").style.display = "block";
+    document.getElementById("publicBookingForm").reset();
+
+    setTimeout(() => {
+      document.getElementById("bookingSuccess").style.display = "none";
+    }, 5000);
+  });
+</script>
+
+</body>
+</html>
